@@ -150,7 +150,7 @@
   </div>
   <button class="btn" id="go">START</button><button class="btn off" id="cancelB" style="display:none">LEAVE</button>
   <div id="mh"></div>
-  <div id="mc">Semis haul a box trailer (press E at its rear to open/close the doors - closing locks any vehicles inside). Pickups can tow trailers: back up to one and press Q to hitch or unhitch. Drive a car onto a car trailer, get out and press E to strap it down. White work trucks have a ram bumper - press L for the amber light. Smash trash cans and crates for loot. Climb ladders to roofs. Beware the zombies - an infection kills you and turns you into one.</div>
+  <div id="mc">Own the safehouse ($20,000) and add its fuel pump ($10,000): unload fuel tanks at its grid with T, take them with Y, hold G at the pump to fill from them. Press T at a gas pump to load or refill a fuel tank onto a pickup bed or flatbed trailer (hold G anywhere to refuel from it). Semis haul a box trailer (press E at its rear to open/close the doors - closing locks any vehicles inside). Pickups can tow trailers: back up to one and press Q to hitch or unhitch. Drive a car onto a car trailer, get out and press E to strap it down. White work trucks have a ram bumper - press L for the amber light. Smash trash cans and crates for loot. Climb ladders to roofs. Beware the zombies - an infection kills you and turns you into one.</div>
 </div></div>
 <script>
 // =====================================================================
@@ -181,10 +181,12 @@ const CFG = {
     semi: { name: 'SEMI', max: 190, acc: 105, turn: 1.7, hp: 320, price: 6000, color: null },
     pickup: { name: 'PICKUP', max: 205, acc: 140, turn: 2.3, hp: 170, price: 800, color: null }
   },
-  trucks: { semiChance: .012, boxes: 3, maxFoldBox: 1.0, jk: { slow: 4, gain: 50, dmg: 3, dmgSp: .08, cd: .6 }, workChance: .03, bumperMult: 2.5, carTrailerPrice: 600, parkedChance: .14, trafficChance: .08, trailers: 14, trailerPrice: 350, towDrag: .22, hitchRange: 28, maxFold: 1.1, hitchMaxAngle: 1.5, unhitchMaxSpeed: 70, trailerHp: { utility: 90, cargo: 140, car: 120, box: 400 } },   // pickups + towable trailers (Q = hitch / unhitch)
+  trucks: { semiChance: .012, boxes: 3, maxFoldBoxDeg: 105, jk: { slow: 4, gain: 50, dmg: 3, dmgSp: .08, cd: .6 }, workChance: .03, bumperMult: 2.5, carTrailerPrice: 600, parkedChance: .14, trafficChance: .08, trailers: 14, trailerPrice: 350, towDrag: .22, hitchRange: 28, maxFoldDeg: 63, hitchMaxAngle: 1.5, unhitchMaxSpeed: 70, trailerHp: { utility: 90, cargo: 140, car: 120, box: 400 } },   // pickups + towable trailers (Q = hitch / unhitch)
   car: { targetParked: 100, reverseMax: 70, gearCaps: [.22, .42, .62, .82, 1], gearAccel: [1.8, 1.35, 1.05, .82, .65], grassSpeed: .5, grassAccel: .6, fuelThrottle: .9, fuelIdle: .25, fuelBase: .03,
     driftMinSpeed: 55, driftMinSlip: 26, comboBreakImpact: 10, crashMin: 25, crashBase: 20, crashMult: .2, wallMin: 35, wallBase: 30, wallMult: .2, startTime: .85, stutterTime: 1.9, stutterChance: .3 },
   traffic: { count: 16, perTick: 2, minDist: 550, maxDist: 950, despawn: 1700, near: 1300, initial: 12 },
+  fuelTank: { price: 500, fill: 400, reach: 80, flow: 14, blast: .6, refillMult: 1 },   // refillMult x gas price per unit = cost to top up a partly used tank at a station
+  safehouse: { price: 20000, pumpPrice: 10000, flow: 16, reach: 80 },   // loadable at pumps onto pickup beds / flatbed trailers
   gas: { price: .5, flowBase: 14, flowWave1: 11, flowWave2: 4, perfectAt: 94, refund: .25, spillCost: 7 },
   shop: { guns: { pistol: 120, smg: 300, rifle: 450, shotgun: 280, sawn: 180, bazooka: 800, crowbar: 40, grenade: 150, a9: 30, a76: 45, shell: 30, rocket: 120 },
     sellFactor: .5, sellValues: { pistol: 120, smg: 300, rifle: 450, shotgun: 280, sawn: 180, bazooka: 800, crowbar: 40, sniper: 600, grenade: 50, a9: 1.25, a76: 1.5, shell: 3.75, rocket: 40 },
@@ -298,13 +300,15 @@ const snd = {
   pop() { nz(.05, .4, 1700, 'bandpass'); tone(rand(110, 160), .05, 'square', .12, -50); },
   chirp() { const n = 2 + (Math.random() * 3 | 0), f = rand(2600, 3800); for (let i = 0; i < n; i++) setTimeout(() => tone(f + rand(-150, 150), .07, 'sine', .028 * amb, rand(-700, 700)), i * 115); }
 };
-function honkSet(on) {
-  if (!AC) return;
+const HORN = { semi: [92, 116, 138], pickup: [196, 247], work: [196, 247] };
+function honkSet(on, tk) {
+  if (!AC) return; const fr = HORN[tk] || [420, 530];
+  if (honk && (!on || honk.tk !== tk)) { const h = honk; honk = null; h.g.gain.linearRampToValueAtTime(.0001, AC.currentTime + .05); h.o.forEach(x => x.stop(AC.currentTime + .06)); }
   if (on && !honk) {
-    const g = AC.createGain(); g.gain.value = .0001; g.gain.linearRampToValueAtTime(.12, AC.currentTime + .02); g.connect(master);
-    const o = [420, 530].map(f => { const x = AC.createOscillator(); x.type = 'square'; x.frequency.value = f; x.connect(g); x.start(); return x; });
-    honk = { g, o };
-  } else if (!on && honk) { const h = honk; honk = null; h.g.gain.linearRampToValueAtTime(.0001, AC.currentTime + .05); h.o.forEach(x => x.stop(AC.currentTime + .06)); }
+    const g = AC.createGain(); g.gain.value = .0001; g.gain.linearRampToValueAtTime(tk === 'semi' ? .16 : .12, AC.currentTime + .02); g.connect(master);
+    const o = fr.map(f => { const x = AC.createOscillator(); x.type = tk === 'semi' ? 'sawtooth' : 'square'; x.frequency.value = f; x.connect(g); x.start(); return x; });
+    honk = { g, o, tk };
+  }
 }
 
 // ---------- items ----------
@@ -437,11 +441,12 @@ function inSolid(x, y, ig) {
   return false;
 }
 let DECOR = [], CONT = [], LADS = [], ATMS = [], ROOFSN = [];
-const SHOPDEF = { gun: ['#7a2a2a', 'GUN SUPPLY', '#ffe23a', 'G'], dealer: ['#2a4a8a', 'AUTO DEALER', '#ffe23a', 'D'], barber: ['#2a7a6a', 'BARBER', '#6ae8c8', 'B'], bank: ['#6a6a3a', 'BANK', '#8aff8a', '$'], hospital: ['#e4e4e4', 'HOSPITAL', '#ff6a6a', 'H'], mall: ['#3a2a4a', 'HAUNTED MALL', '#b06aff', 'Z'] };
+let SAFE_Z = null;                                                   // the city block (next to the spawn crossroads) kept clear of buildings for the safehouse compound
+const SHOPDEF = { gun: ['#7a2a2a', 'GUN SUPPLY', '#ffe23a', 'G'], dealer: ['#2a4a8a', 'AUTO DEALER', '#ffe23a', 'D'], barber: ['#2a7a6a', 'BARBER', '#6ae8c8', 'B'], bank: ['#6a6a3a', 'BANK', '#8aff8a', '$'], hospital: ['#e4e4e4', 'HOSPITAL', '#ff6a6a', 'H'], mall: ['#3a2a4a', 'HAUNTED MALL', '#b06aff', 'Z'], safehouse: ['#6d5a48', 'SAFEHOUSE', '#7ae0ff', 'S'] };
 const SHOPCOL = { 'GUN SUPPLY': '#d04040', 'AUTO DEALER': '#4a80e0', BARBER: '#2ac0a0', BANK: '#b0b040', HOSPITAL: '#f0f0f0', HIDEOUT: '#e03030', GAS: '#e8a030', 'HAUNTED MALL': '#b06aff' };
 function genWorld(seed) {
   const R = mulberry(seed), rr = (a, b) => a + R() * (b - a);
-  RX = []; RY = []; BL = []; BLDS = []; TREES = []; LIGHTS = []; LOTS = []; SHOPS = []; GAS = []; OBS = new Map(); DECOR = []; CONT = []; LADS = []; ATMS = []; ROOFSN = []; HIDEOUTS = [];
+  RX = []; RY = []; BL = []; BLDS = []; TREES = []; LIGHTS = []; LOTS = []; SHOPS = []; GAS = []; OBS = new Map(); DECOR = []; CONT = []; LADS = []; ATMS = []; ROOFSN = []; HIDEOUTS = []; SAFE_Z = null;
   const mk = arr => { let p = 140; for (let i = 0; i <= NB; i++) { const boul = i % 4 === 2, w = boul ? 80 : 46; arr.push({ a: p, b: p + w, c: p + w / 2, boul, w }); p += w; if (i < NB) p += Math.round(rr(250, 350)); } return p + 140; };
   MX = mk(RX); MY = mk(RY);
   const addTree = (x, y) => { TREES.push({ x, y, r: Math.round(rr(10, 14)), a: 1, s: (R() * 3) | 0 }); obsAdd({ x, y, r: 3 }, x - 3, y - 3, x + 3, y + 3); };
@@ -465,7 +470,8 @@ function genWorld(seed) {
       for (let s = 30; s < h - 30; s += 56 + rr(-6, 6)) { addTree(x + o, y + s); addTree(x + w - o, y + s); }
     }
     const Z = b.z;
-    if (t === 'b') {
+    if (t === 'b' && ix === 8 && iy === 8) { SAFE_Z = Z; }
+    else if (t === 'b') {
       const cols = Math.max(1, Math.min(1 + ((R() * 3) | 0), Math.floor(Z.w / 70))), rows = Math.max(1, Math.min(1 + ((R() * 3) | 0), Math.floor(Z.h / 70))), gap = 10;
       const cw = (Z.w - (cols - 1) * gap) / cols, ch = (Z.h - (rows - 1) * gap) / rows;
       for (let rI = 0; rI < rows; rI++) for (let cI = 0; cI < cols; cI++) {
@@ -554,6 +560,7 @@ let BOXES = [], BXI = null;                                          // box trai
 const refreshBoxes = () => { BOXES = trailers.filter(t => t.kind === 'box'); };
 const isPU = c => c.tk === 'pickup' || c.tk === 'work';
 const bumper = (w, o) => w.tk === 'work' && ((o.x - w.x) * Math.sin(w.a) - (o.y - w.y) * Math.cos(w.a)) > 0;      // reinforced front: the other thing is ahead of a work truck
+const foldLimit = t => (t.kind === 'box' ? CFG.trucks.maxFoldBoxDeg : CFG.trucks.maxFoldDeg) * Math.PI / 180;
 const tsamp = t => [-t.hl * .7, 0, t.hl * .7];
 function pickPark() { const r = Math.random(), T = CFG.trucks; return r < T.semiChance ? 'semi' : r < T.semiChance + T.parkedChance ? 'pickup' : r < T.semiChance + T.parkedChance + T.workChance ? 'work' : 'compact'; }
 const colors = ['#d8c21e', '#c8321f', '#2f6fd6', '#e8e8e8', '#9b3fb0'], OFF = [-8, 0, 8];
@@ -563,7 +570,7 @@ try { const s = JSON.parse(localStorage.getItem('gta1hi')); if (s && s.score) hi
 function mkCar(x, y, a, ty = 'compact', fuel) {
   const T = CTYPES[ty];
   return { x, y, a, vx: 0, vy: 0, v: 0, sp: 0, hp: T.hp, maxhp: T.hp, over: 0, dead: false, ty: T, tk: ty, color: T.color || colors[(Math.random() * colors.length) | 0], em: 0, fe: 0, skid: false, drift: false, hc: 0, sa: 0,
-    gear: 1, auto: true, rpm: 0, thr: 0, brk: 0, start: 0, ex: 0, drv: null, ai: null, trailer: null, hd: ty === 'semi' ? 9 : 18, fuel: fuel === undefined ? rand(30, 85) : fuel };
+    gear: 1, auto: true, rpm: 0, thr: 0, brk: 0, start: 0, ex: 0, drv: null, ai: null, trailer: null, tanks: [], hd: ty === 'semi' ? 9 : 18, fuel: fuel === undefined ? rand(30, 85) : fuel };
 }
 const mkPick = (t, x, y, n) => ({ t, x, y, n: n || BUNDLE[t] || 1, life: t === 'heal' || t === 'gear' ? CFG.loot.healLife : t === 'cash' ? CFG.loot.cashLife : rand(CFG.loot.life[0], CFG.loot.life[1]), nb: 0, drop: false, rot: rand(-.6, .6) });
 const MAXT = 2500, tracks = new Array(MAXT), prints = new Array(300); let tIdx = 0, pIdx = 0;
@@ -585,7 +592,7 @@ function spawnRoadCar(minD, maxD, around, what) {                       // parke
     if (what === 'trailer') trailers.push(mkTrailer(cx, cy, a)); else cars.push(mkCar(cx, cy, a, pickPark())); return true;
   } return false;
 }
-function spawnInitialCars() { cars = []; trailers = []; for (let i = 0; i < 12; i++) spawnTraffic(150, 800, START); let n = 0; while (cars.filter(c => !c.ai).length < TARGET_CARS && n++ < 500) spawnRoadCar(0, 0, null); n = 0; while (trailers.length < CFG.trucks.trailers && n++ < 400) spawnRoadCar(0, 0, null, 'trailer'); spawnBox(true); spawnSemiNear(); for (let i = 1; i < CFG.trucks.boxes; i++) spawnBox(false); }
+function spawnInitialCars() { placeSafehouse(); cars = []; trailers = []; for (let i = 0; i < 12; i++) spawnTraffic(150, 800, START); let n = 0; while (cars.filter(c => !c.ai).length < TARGET_CARS && n++ < 500) spawnRoadCar(0, 0, null); n = 0; while (trailers.length < CFG.trucks.trailers && n++ < 400) spawnRoadCar(0, 0, null, 'trailer'); spawnBox(true); spawnSemiNear(); for (let i = 1; i < CFG.trucks.boxes; i++) spawnBox(false); }
 function removeCar(c) {
   if (c.strapT) c.strapT.load = null; if (c.boxT) c.boxT.cargo = c.boxT.cargo.filter(x => x !== c);
   if (c.trailer) detachTrailer(c); if (p.car === c) exitCar(); const i = cars.indexOf(c); if (i >= 0) cars.splice(i, 1); if (nearP(c.x, c.y, 500)) { snd.boom(.5); shake += 2; }
@@ -632,6 +639,7 @@ function shopRows(k, tab) {
     ok: () => T.price && cash >= T.price, buy: () => { let sy = shopCur.sy; while (cars.some(c => Math.hypot(c.x - shopCur.sx, c.y - sy) < 22)) sy += 24; cars.push(mkCar(shopCur.sx, sy, 0, key, 100)); cash -= T.price; return true; } }; }).concat([dealerTrailerRow('utility', 'UTILITY TRAILER', CFG.trucks.trailerPrice), dealerTrailerRow('car', 'CAR TRAILER', CFG.trucks.carTrailerPrice)]);
   if (k === 'hospital') return [{ icon: ICON.heal, name: 'FULL HEAL', price: SH.hospitalHeal, ok: () => cash >= SH.hospitalHeal && hp < maxHP(), buy: () => { hp = maxHP(); cash -= SH.hospitalHeal; return true; } },
     { icon: ICON.heal, name: 'CURE INFECTION + HEAL', price: SH.hospitalCure, ok: () => cash >= SH.hospitalCure && (p.inf > 0 || hp < maxHP()), buy: () => { hp = maxHP(); p.inf = 0; cash -= SH.hospitalCure; return true; } }];
+  if (k === 'safehouse') return safeRows();
   const [b1, b2] = SH.bankSteps;
   const dep = a => ({ icon: ICON.cash, name: a < 0 ? 'DEPOSIT ALL' : 'DEPOSIT $' + a, price: '', btn: 'DEPOSIT', ok: () => cash >= (a < 0 ? 1 : a), buy: () => { const m = a < 0 ? Math.floor(cash) : a; cash -= m; bank += m; return true; } });
   const wd = a => ({ icon: ICON.cash, name: a < 0 ? 'WITHDRAW ALL' : 'WITHDRAW $' + a, price: '', btn: 'WITHDRAW', ok: () => bank >= (a < 0 ? 1 : a), buy: () => { const m = a < 0 ? Math.floor(bank) : a; bank -= m; cash += m; return true; } });
@@ -659,7 +667,7 @@ function damageCar(c, dmg, scoring = true) {
   if (scoring) { const hm = hitCombo(c.x, c.y), pts = Math.round(dmg * CFG.scoring.carDamage * hm); score += pts; lifesteal(dmg); floats.push({ x: c.x, y: c.y - 10, s: '+' + pts, life: .9 }); if (c.drv) ejectDriver(c); }   // hit a driven car and the driver bails out
   if (c.dead) { c.over += dmg; if (c.over >= c.maxhp) removeCar(c); return; }
   c.hp -= dmg;
-  if (c.hp <= 0) { c.hp = 0; c.dead = true; if (c.trailer) detachTrailer(c); if (c.drv) { const k = mkPick('cash', c.x, c.y, Math.round(rand(CFG.economy.driverCash[0], CFG.economy.driverCash[1]))); k.life = 120; pickups.push(k); c.drv = null; c.ai = null; } if (p.car === c) exitCar(); explode(c.x, c.y, CFG.explosions.wreck.r, CFG.explosions.wreck.car, CFG.explosions.wreck.player); }
+  if (c.hp <= 0) { c.hp = 0; c.dead = true; if (c.trailer) detachTrailer(c); if (c.drv) { const k = mkPick('cash', c.x, c.y, Math.round(rand(CFG.economy.driverCash[0], CFG.economy.driverCash[1]))); k.life = 120; pickups.push(k); c.drv = null; c.ai = null; } if (p.car === c) exitCar(); const tm = 1 + CFG.fuelTank.blast * c.tanks.length; c.tanks = []; explode(c.x, c.y, CFG.explosions.wreck.r * tm, CFG.explosions.wreck.car * tm, CFG.explosions.wreck.player * tm); }
 }
 function addPart(o) { if (S.parts < 1 && Math.random() > S.parts) return; if (parts.length > 800) parts.shift(); parts.push(o); }
 function explode(x, y, R, dc, dp, byP = true) {
@@ -795,7 +803,7 @@ function updateCar(c, dt, inp) {
   if (S.tracks) track(c, c.skid || c.drift);
 }
 function collideCars(a, b) {
-  if (Math.abs(a.x - b.x) > 56 || Math.abs(a.y - b.y) > 56) return;
+  if (Math.abs(a.x - b.x) > 56 || Math.abs(a.y - b.y) > 56 || inBox(a, b) || inBox(b, a)) return;
   for (const oa of carOffs(a)) for (const ob of carOffs(b)) {
     const ax = a.x + Math.sin(a.a) * oa, ay = a.y - Math.cos(a.a) * oa, bx = b.x + Math.sin(b.a) * ob, by = b.y - Math.cos(b.a) * ob;
     let dx = bx - ax, dy = by - ay; const d = Math.hypot(dx, dy) || .01; if (d >= 15) continue; dx /= d; dy /= d;
@@ -835,10 +843,10 @@ const tHitch = t => ({ x: t.x + Math.sin(t.a) * t.tl, y: t.y - Math.cos(t.a) * t
 const angD = (a, b) => { const r = a - b; return Math.atan2(Math.sin(r), Math.cos(r)); };
 function mkTrailer(x, y, a, kind) {
   const r0 = Math.random(); kind = kind || (r0 < .4 ? 'utility' : r0 < .7 ? 'cargo' : 'car'); const hp = CFG.trucks.trailerHp[kind], hl = kind === 'box' ? 50 : kind === 'car' ? 20 : 13, hw = kind === 'box' ? 11.5 : kind === 'car' ? 9.5 : 6.5;
-  return { isTrailer: true, hl, hw, tl: kind === 'box' ? hl - 6 : hl + 8, load: null, cargo: [], open: false, roofA: 1, jc: 0, boxT: null, ty: { name: 'TRAILER' }, kind, x, y, a, vx: 0, vy: 0, v: 0, sp: 0, hp, maxhp: hp, over: 0, dead: false, drv: null, hc: 0, em: 0, hitched: null, color: kind === 'cargo' || kind === 'box' ? TCOL[(Math.random() * TCOL.length) | 0] : '#6b6f75' };
+  return { isTrailer: true, hl, hw, tanks: [], tl: kind === 'box' ? hl - 6 : hl + 8, ax: kind === 'box' ? hl - 9.5 : kind === 'car' ? 6 : 4.5, load: null, cargo: [], open: false, roofA: 1, jc: 0, boxT: null, ty: { name: 'TRAILER' }, kind, x, y, a, vx: 0, vy: 0, v: 0, sp: 0, hp, maxhp: hp, over: 0, dead: false, drv: null, hc: 0, em: 0, hitched: null, color: kind === 'cargo' || kind === 'box' ? TCOL[(Math.random() * TCOL.length) | 0] : '#6b6f75' };
 }
 function trailerNear(c) { let best = null, bd = CFG.trucks.hitchRange; const H = hitchOf(c); for (const t of trailers) { if (t.dead || t.hitched || (c.tk === 'semi') !== (t.kind === 'box')) continue; const d = Math.hypot(tHitch(t).x - H.x, tHitch(t).y - H.y); if (d < bd) { bd = d; best = t; } } return best; }
-function detachTrailer(c) { const t = c.trailer; if (!t) return; t.hitched = null; c.trailer = null; }
+function detachTrailer(c) { const t = c.trailer; if (!t) return; t.hx = undefined; t.hitched = null; c.trailer = null; }
 function removeTrailer(t) {
   if (t.load) unstrap(t.load, true); if (t.kind === 'box') openBox(t, true); if (t.boxT) t.boxT.cargo = t.boxT.cargo.filter(x => x !== t);
   if (t.hitched) detachTrailer(t.hitched); const i = trailers.indexOf(t); if (i >= 0) trailers.splice(i, 1); if (nearP(t.x, t.y, 500)) { snd.boom(.4); shake += 1.5; }
@@ -847,7 +855,7 @@ function removeTrailer(t) {
 function damageTrailer(t, dmg, scoring = true) {
   if (scoring) { const hm = hitCombo(t.x, t.y), pts = Math.round(dmg * CFG.scoring.carDamage * hm * .5); score += pts; lifesteal(dmg); floats.push({ x: t.x, y: t.y - 10, s: '+' + pts, life: .9 }); }
   if (t.dead) { t.over += dmg; if (t.over >= t.maxhp) removeTrailer(t); return; }
-  t.hp -= dmg; if (t.hp <= 0) { t.hp = 0; t.dead = true; if (t.load) unstrap(t.load, true); if (t.kind === 'box') openBox(t, true); if (t.hitched) detachTrailer(t.hitched); explode(t.x, t.y, CFG.explosions.wreck.r * .7, CFG.explosions.wreck.car * .6, CFG.explosions.wreck.player * .6); }
+  t.hp -= dmg; if (t.hp <= 0) { t.hp = 0; t.dead = true; if (t.load) unstrap(t.load, true); if (t.kind === 'box') openBox(t, true); if (t.hitched) detachTrailer(t.hitched); const tm = 1 + CFG.fuelTank.blast * t.tanks.length; t.tanks = []; explode(t.x, t.y, CFG.explosions.wreck.r * .7 * tm, CFG.explosions.wreck.car * .6 * tm, CFG.explosions.wreck.player * .6 * tm); }
 }
 function towKey() {
   const c = p.car; if (!c || c.dead) return;
@@ -855,22 +863,23 @@ function towKey() {
   if (c.trailer) { if (c.sp > CFG.trucks.unhitchMaxSpeed) { toast('SLOW DOWN TO UNHITCH'); return; } detachTrailer(c); snd.door(); toast('TRAILER UNHITCHED'); return; }
   const t = trailerNear(c); if (!t) { toast('BACK UP TO A TRAILER HITCH, THEN PRESS Q'); return; }
   if (Math.abs(angD(t.a, c.a)) > CFG.trucks.hitchMaxAngle) { toast('LINE UP WITH THE TRAILER FIRST'); return; }
-  t.hitched = c; c.trailer = t; snd.door(); toast('TRAILER HITCHED');
+  t.hitched = c; c.trailer = t; t.hx = undefined; snd.door(); toast('TRAILER HITCHED');
 }
 const towPrompt = c => !canTow(c) ? '' : c.trailer ? '[Q] UNHITCH TRAILER   [E] EXIT CAR' : trailerNear(c) ? '[Q] HITCH TRAILER   [E] EXIT CAR' : '';
 function updateTrailer(t, dt) {
   const c = t.hitched, fx = Math.sin(t.a), fy = -Math.cos(t.a); t.hc -= dt; t.jc -= dt; BXI = t.kind === 'box' ? t : null;
   if (c) {
-    const H = hitchOf(c), ox = t.x, oy = t.y; let na = Math.atan2(H.x - t.x, -(H.y - t.y)); const rel = angD(na, c.a), F = t.kind === 'box' ? CFG.trucks.maxFoldBox : CFG.trucks.maxFold;
-    na = c.a + clamp(rel, -F, F); t.a = na; t.x = H.x - Math.sin(na) * t.tl; t.y = H.y + Math.cos(na) * t.tl; t.vx = (t.x - ox) / dt; t.vy = (t.y - oy) / dt;
-    const k = Math.exp(-CFG.trucks.towDrag * dt); c.vx *= k; c.vy *= k; const ex = Math.abs(rel) - F; if (ex > .0005 && c.sp > 8) jack(t, c, ex, dt);                                   // towing slows the truck
-    for (const o of tsamp(t)) { const h = obsHit(t.x + Math.sin(t.a) * o, t.y - Math.cos(t.a) * o, 6); if (!h) continue;
-      c.x += h.nx * h.pen; c.y += h.ny * h.pen; const vn = -(c.vx * h.nx + c.vy * h.ny);
-      if (vn > 0) { c.vx += h.nx * vn * 1.1; c.vy += h.ny * vn * 1.1; if (vn > CFG.car.wallMin && t.hc <= 0) { t.hc = .35; damageTrailer(t, Math.round((vn - CFG.car.wallBase) * CFG.car.wallMult), false); crashFx(vn, t.x, t.y, c === p.car); } } break; }
+    const H = hitchOf(c), ox = t.x, oy = t.y, d = t.tl + t.ax, F = foldLimit(t), H0 = t.hx === undefined ? H : { x: t.hx, y: t.hy };
+    let axx = t.x - Math.sin(t.a) * t.ax, axy = t.y + Math.cos(t.a) * t.ax, na = t.a, rel = 0;           // rear axle point: it can only roll along the trailer's heading
+    const n = clamp(Math.ceil(Math.hypot(H.x - H0.x, H.y - H0.y) / 1.5), 1, 60);
+    for (let i = 1; i <= n; i++) { const hx = H0.x + (H.x - H0.x) * i / n, hy = H0.y + (H.y - H0.y) * i / n; na = Math.atan2(hx - axx, -(hy - axy)); rel = angD(na, c.a); if (Math.abs(rel) > F) na = c.a + clamp(rel, -F, F); axx = hx - Math.sin(na) * d; axy = hy + Math.cos(na) * d; }
+    t.a = na; t.x = axx + Math.sin(na) * t.ax; t.y = axy - Math.cos(na) * t.ax; t.hx = H.x; t.hy = H.y; t.vx = (t.x - ox) / dt; t.vy = (t.y - oy) / dt;
+    const k = Math.exp(-CFG.trucks.towDrag * dt); c.vx *= k; c.vy *= k; const ex = Math.abs(rel) - F; if (ex > .0005 && c.sp > 8) jack(t, c, ex, dt);
+    trailerObs(t, c);
   } else {
     const k = Math.exp(-2.4 * dt); t.vx *= k; t.vy *= k; t.x += t.vx * dt; t.y += t.vy * dt;
     if (t.x < 12 || t.x > MX - 12) { t.x = clamp(t.x, 12, MX - 12); t.vx *= -.3; } if (t.y < 12 || t.y > MY - 12) { t.y = clamp(t.y, 12, MY - 12); t.vy *= -.3; }
-    for (const o of tsamp(t)) { const h = obsHit(t.x + Math.sin(t.a) * o, t.y - Math.cos(t.a) * o, 6); if (!h) continue; t.x += h.nx * h.pen; t.y += h.ny * h.pen; const vn = -(t.vx * h.nx + t.vy * h.ny); if (vn > 0) { t.vx += h.nx * vn * 1.3; t.vy += h.ny * vn * 1.3; if (vn > CFG.car.wallMin && t.hc <= 0) { t.hc = .35; damageTrailer(t, Math.round((vn - CFG.car.wallBase) * CFG.car.wallMult), false); } } }
+    for (const [sx, sy, r] of tPts(t)) { const h = obsHit(sx, sy, r); if (!h) continue; t.x += h.nx * h.pen; t.y += h.ny * h.pen; const vn = -(t.vx * h.nx + t.vy * h.ny); if (vn > 0) { t.vx += h.nx * vn * 1.3; t.vy += h.ny * vn * 1.3; if (vn > CFG.car.wallMin && t.hc <= 0) { t.hc = .35; damageTrailer(t, Math.round((vn - CFG.car.wallBase) * CFG.car.wallMult), false); } } }
   }
   t.sp = Math.hypot(t.vx, t.vy); BXI = null; if (S.tracks) trackT(t);
   if (t.dead && Math.abs(t.x - cam.x) < 500 && Math.abs(t.y - cam.y) < 400) {
@@ -880,7 +889,7 @@ function updateTrailer(t, dt) {
 function trailerVsCars(t) {
   if (t.kind === 'car' || t.kind === 'box') return;                      // flatbed: cars drive onto it; box walls use obsHit
   for (const c of cars) {
-    if (c === t.hitched || Math.abs(c.x - t.x) > 46 || Math.abs(c.y - t.y) > 46) continue;
+    if (c === t.hitched || Math.abs(c.x - t.x) > 46 || Math.abs(c.y - t.y) > 46 || inBox(c, t)) continue;
     const offs = carOffs(c);
     for (const so of tsamp(t)) { let hit = false;
       for (const co of offs) {
@@ -902,13 +911,40 @@ const dealerTrailerRow = (kind, nm, price) => ({ icon: trailerIcon, name: nm, pr
   ok: () => cash >= price, buy: () => { let sy = shopCur.sy; while (cars.some(c => Math.hypot(c.x - shopCur.sx, c.y - sy) < 30) || trailers.some(t => Math.hypot(t.x - shopCur.sx, t.y - sy) < 30)) sy += 30; trailers.push(mkTrailer(shopCur.sx, sy, 0, kind)); cash -= price; return true; } });
 function trailerUnder(c) {                                          // a car parked on a car-trailer deck, roughly aligned and nearly stopped
   if (c.sp > 40 || c.dead) return null;
-  for (const t of trailers) { if (t.kind !== 'car' || t.dead || (t.load && t.load !== c)) continue; const dx = c.x - t.x, dy = c.y - t.y, lx = dx * Math.cos(t.a) + dy * Math.sin(t.a), ly = -dx * Math.sin(t.a) + dy * Math.cos(t.a);
+  for (const t of trailers) { if (t.kind !== 'car' || t.dead || t.tanks.length || (t.load && t.load !== c)) continue; const dx = c.x - t.x, dy = c.y - t.y, lx = dx * Math.cos(t.a) + dy * Math.sin(t.a), ly = -dx * Math.sin(t.a) + dy * Math.cos(t.a);
     const da = Math.abs(angD(c.a, t.a)), al = Math.min(da, Math.abs(Math.PI - da)); if (Math.abs(lx) < t.hw + 2 && Math.abs(ly) < t.hl - 3 && al < .45) return t; } return null;
 }
 function strap(c, t) { const dx = c.x - t.x, dy = c.y - t.y; c.sl = { x: dx * Math.cos(t.a) + dy * Math.sin(t.a), y: -dx * Math.sin(t.a) + dy * Math.cos(t.a), da: angD(c.a, t.a) }; c.strapT = t; t.load = c; c.vx = c.vy = c.sp = 0; snd.door(); toast('CAR STRAPPED DOWN'); }
 function unstrap(c, quiet) { const t = c.strapT; if (t) t.load = null; c.strapT = null; if (!quiet) { snd.door(); toast('STRAPS RELEASED'); } }
 function placeOn(o, t) { const cs = Math.cos(t.a), sn = Math.sin(t.a); o.x = t.x + o.sl.x * cs - o.sl.y * sn; o.y = t.y + o.sl.x * sn + o.sl.y * cs; o.a = t.a + o.sl.da; o.vx = t.vx; o.vy = t.vy; o.sp = t.sp; }
 function holdLoad(t) { if (t.load) placeOn(t.load, t); for (const o of t.cargo) { placeOn(o, t); if (o.isTrailer && o.load) holdLoad(o); } }
+const tankSlots = v => v.isTrailer ? (v.kind === 'utility' ? [[0, -5, 3.6], [0, 5, 3.6]] : v.kind === 'car' ? [[0, -9, 4.6], [0, 9, 4.6]] : []) : v.tk === 'work' ? [[-3, 8, 2.8], [3, 8, 2.8]] : v.tk === 'pickup' ? [[0, 8, 3.6]] : [];
+function drawTanks(v) {
+  const S = tankSlots(v); v.tanks.forEach((f, i) => { const q = S[i]; if (!q) return; const [x, y, r] = q;
+    ctx.fillStyle = '#6a140c'; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.fillStyle = f > .01 ? '#d8321f' : '#6a4a44'; ctx.beginPath(); ctx.arc(x, y, r - .8, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(x - r * .5, y - r * .5, r * .5, 1); ctx.fillStyle = '#222'; ctx.fillRect(x - .8, y - .8, 1.6, 1.6); });
+}
+function tankTarget() {                                              // the pickup bed / flatbed trailer nearest the pump you're at that still has room
+  const ref = p.car || p; let pp = null, pd = 60;
+  for (const g of GAS) for (const q of g.pumps) { const d = Math.hypot(ref.x - q.x, ref.y - q.y); if (d < pd) { pd = d; pp = q; } }
+  if (!pp) return null; let best = null, bd = CFG.fuelTank.reach;
+  const test = v => { const cap = tankSlots(v).length; if (!cap || v.dead || (v.tanks.length >= cap && !v.tanks.some(f => f < CFG.fuelTank.fill - 1)) || (v.isTrailer && (v.load || v.boxT))) return; const d = Math.hypot(v.x - pp.x, v.y - pp.y); if (d < bd) { bd = d; best = v; } };
+  for (const c of cars) test(c); for (const t of trailers) test(t);
+  return best;
+}
+function loadTank() {
+  const ref = p.car || p; if (SAFE.pumpOn && nearGrid()) { gridUnload(); return; } if (!GAS.some(g => g.pumps.some(q => Math.hypot(ref.x - q.x, ref.y - q.y) < 60))) return;
+  const v = tankTarget(), T = CFG.fuelTank; if (!v) { toast('PARK A PICKUP OR FLATBED TRAILER WITH ROOM BY THE PUMP'); return; }
+  if (cash < T.price) { toast('NOT ENOUGH CASH - A TANK COSTS $' + T.price); return; }
+  const ri = v.tanks.findIndex(f => f < T.fill - 1);
+  if (ri >= 0) { const cost = Math.round((T.fill - v.tanks[ri]) * CFG.gas.price * T.refillMult); if (cash < cost) { toast('NOT ENOUGH CASH - REFILL COSTS $' + cost); return; } cash -= cost; v.tanks[ri] = T.fill; snd.buy(); toast('TANK REFILLED FOR $' + cost); return; }
+  cash -= T.price; v.tanks.push(T.fill); snd.buy(); toast('FUEL TANK LOADED ON ' + (v.isTrailer ? 'THE TRAILER' : v.ty.name) + ' - HOLD G ANYWHERE TO REFUEL FROM IT');
+}
+function tankDraw(c, dt) {                                           // pull fuel out of a tank riding on (or right next to) this car
+  let src = null; const test = v => { if (src) return; const i = v.tanks.findIndex(f => f > .01); if (i >= 0 && (v === c || Math.hypot(v.x - c.x, v.y - c.y) < 46)) src = [v, i]; };
+  test(c); if (c.trailer) test(c.trailer); for (const t of trailers) test(t); for (const o of cars) test(o); if (!src) return false;
+  const amt = Math.min(CFG.fuelTank.flow * dt, 100 - c.fuel, src[0].tanks[src[1]]); c.fuel += amt; src[0].tanks[src[1]] -= amt; if (Math.random() < .1) snd.fuel(); if (c.fuel >= 100) snd.click(); return true;
+}
 function drawCarTrailer(t) {
   ctx.save(); ctx.translate(Math.round(t.x), Math.round(t.y)); ctx.rotate(t.a);
   ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(-8, -19, 20, 40);
@@ -919,14 +955,44 @@ function drawCarTrailer(t) {
   ctx.fillStyle = '#3b3f45'; for (let y = -16; y < 18; y += 6) ctx.fillRect(-8.5, y, 17, 1);
   ctx.fillStyle = '#e0b020'; ctx.fillRect(-10, -20, 20, 1.5); ctx.fillStyle = '#8a8f96'; ctx.fillRect(-8, 18, 16, 3);
   ctx.fillStyle = '#b01010'; ctx.fillRect(-9, 19.5, 3, 1); ctx.fillRect(6, 19.5, 3, 1);
+  drawTanks(t);
   if (t.load) { ctx.fillStyle = '#e0b020'; ctx.fillRect(-10, -6, 20, 1); ctx.fillRect(-10, 6, 20, 1); }
   if (t.dead) { ctx.fillStyle = 'rgba(15,12,10,.62)'; ctx.fillRect(-10, -20, 20, 40); }
   ctx.restore();
+}
+const tPts = t => { const wide = t.hw > 8, al = wide ? [-.9, -.45, 0, .45, .9] : [-.7, 0, .7], lat = wide ? [-(t.hw - 3.5), t.hw - 3.5] : [0], r = wide ? 3.8 : 6, fx = Math.sin(t.a), fy = -Math.cos(t.a), rx = Math.cos(t.a), ry = Math.sin(t.a), P = [];
+  for (const a of al) for (const l of lat) P.push([t.x + fx * a * t.hl + rx * l, t.y + fy * a * t.hl + ry * l, r]); return P; };
+function trailerObs(t, c) {                                          // a blocked trailer swings round the hitch; only when it can't does the truck get shoved
+  let H = hitchOf(c), F = foldLimit(t);
+  for (let it = 0; it < 3; it++) {
+    let best = null; for (const [sx, sy, r] of tPts(t)) { const h = obsHit(sx, sy, r); if (h && (!best || h.pen > best.pen)) { best = h; best.sx = sx; best.sy = sy; } }
+    if (!best) return;
+    const oy = best.sy - H.y, ox = best.sx - H.x, g = -best.nx * oy + best.ny * ox; let done = false;
+    const vnT = -(t.vx * best.nx + t.vy * best.ny); if (vnT > CFG.car.wallMin && t.hc <= 0) { t.hc = .35; damageTrailer(t, Math.round((vnT - CFG.car.wallBase) * CFG.car.wallMult), false); crashFx(vnT, best.sx, best.sy, c === p.car); }
+    if (Math.abs(g) > 10) { const na = t.a + clamp(best.pen / g, -.12, .12); if (Math.abs(angD(na, c.a)) <= F) { t.a = na; t.x = H.x - Math.sin(na) * t.tl; t.y = H.y + Math.cos(na) * t.tl; done = true; } }
+    if (!done) { c.x += best.nx * best.pen; c.y += best.ny * best.pen; const vn = -(c.vx * best.nx + c.vy * best.ny); if (vn > 0) { c.vx += best.nx * vn; c.vy += best.ny * vn; } H = hitchOf(c); t.x = H.x - Math.sin(t.a) * t.tl; t.y = H.y + Math.cos(t.a) * t.tl; }
+  }
+}
+const inBox = (sm, x) => { if (sm.tk !== 'semi' || !sm.trailer || x.tk === 'semi') return false; const b = sm.trailer, q = locIn(b, x.x, x.y); return Math.abs(q.lx) < b.hw && Math.abs(q.ly) < b.hl; };   // vehicle sitting inside the semi's own box: no collision with the tractor underneath
+function carryCargo() {                                              // unstrapped vehicles (and you) standing in an open box ride along with it
+  for (const t of BOXES) {
+    const P = t.pp; if (P && t.open) { const da = angD(t.a, P.a);
+      if (Math.abs(t.x - P.x) + Math.abs(t.y - P.y) + Math.abs(da) > 1e-4) {
+        const cp = Math.cos(P.a), sp_ = Math.sin(P.a), cn = Math.cos(t.a), sn = Math.sin(t.a);
+        const mv = o => { const dx = o.x - P.x, dy = o.y - P.y, lx = dx * cp + dy * sp_, ly = -dx * sp_ + dy * cp; if (Math.abs(lx) >= t.hw - 1 || Math.abs(ly) >= t.hl - 1) return false; o.x = t.x + lx * cn - ly * sn; o.y = t.y + lx * sn + ly * cn; return true; };
+        for (const c of cars) { if (c === p.car || c.drv || c.boxT || c.strapT || c.tk === 'semi') continue; if (mv(c)) { c.a += da; c.vx = c.vy = 0; } }
+        for (const u of trailers) { if (u === t || u.kind === 'box' || u.boxT || u.hitched) continue; if (mv(u)) { u.a += da; u.vx = u.vy = 0; if (u.load) holdLoad(u); } }
+        if (!p.car && !p.roof) mv(p);
+      } }
+    t.pp = { x: t.x, y: t.y, a: t.a };
+  }
 }
 function boxHit(x, y, r) {
   let best = null;
   for (const t of BOXES) { if (t === BXI) continue; const dx = x - t.x, dy = y - t.y; if (Math.abs(dx) > t.hl + r + 6 || Math.abs(dy) > t.hl + r + 6) continue;
     const cs = Math.cos(t.a), sn = Math.sin(t.a), lx = dx * cs + dy * sn, ly = -dx * sn + dy * cs, hw = t.hw, hl = t.hl, th = 2.2;
+    if (Math.abs(lx) < hw && Math.abs(ly) < hl) { const cand = [[lx + hw - th, 1, 0], [hw - th - lx, -1, 0], [ly + hl - th, 0, 1]]; if (!t.open) cand.push([hl - th - ly, 0, -1]);
+      for (const [dd, nx, ny] of cand) if (dd < r) { const pen = r - dd; if (!best || pen > best.pen) best = { nx: nx * cs - ny * sn, ny: nx * sn + ny * cs, pen, o: null }; } continue; }
     const W = [[-hw, -hw + th, -hl, hl], [hw - th, hw, -hl, hl], [-hw, hw, -hl, -hl + th]]; if (!t.open) W.push([-hw, hw, hl - th, hl]);
     for (const [x0, x1, y0, y1] of W) { const qx = clamp(lx, x0, x1), qy = clamp(ly, y0, y1), ex = lx - qx, ey = ly - qy, d = Math.hypot(ex, ey); if (d >= r) continue; let nx, ny, pen;
       if (d < .01) { const m = [lx - x0, x1 - lx, ly - y0, y1 - ly], k = m.indexOf(Math.min(...m)); nx = [-1, 1, 0, 0][k]; ny = [0, 0, -1, 1][k]; pen = r + m[k]; } else { nx = ex / d; ny = ey / d; pen = r - d; }
@@ -1011,6 +1077,7 @@ function drawTruck(c) {
   ctx.fillStyle = '#fff6b0'; ctx.fillRect(-6.5, -17, 3, 1); ctx.fillRect(3.5, -17, 3, 1);
   ctx.fillStyle = '#b01010'; ctx.fillRect(-7, 16, 2, 1); ctx.fillRect(5, 16, 2, 1);
   ctx.fillStyle = '#555'; ctx.fillRect(-3, 17, 6, 1.2); ctx.fillStyle = '#999'; ctx.fillRect(-1, 17.6, 2, 1.8);
+  drawTanks(c);
   if (c.tk === 'work') { ctx.fillStyle = '#e8731a'; ctx.fillRect(-7.5, -1, 15, 1.2); ctx.fillStyle = '#3a3d42'; ctx.fillRect(-8.5, -19, 17, 3); ctx.fillStyle = '#f2c230'; for (let i = -6; i < 7; i += 4) ctx.fillRect(i, -18.5, 2, 2);
     ctx.save(); ctx.translate(0, -4); ctx.fillStyle = c.light ? '#ffb020' : '#7a5a20'; ctx.fillRect(-1.6, -1.6, 3.2, 3.2);
     if (c.light) { ctx.rotate(time * 7 - c.a); ctx.fillStyle = 'rgba(255,170,30,.38)'; ctx.fillRect(0, -1.2, 18, 2.4); ctx.fillRect(-18, -1.2, 18, 2.4); ctx.fillStyle = 'rgba(255,170,30,.18)'; ctx.beginPath(); ctx.arc(0, 0, 8, 0, 7); ctx.fill(); } ctx.restore(); }
@@ -1035,6 +1102,7 @@ function drawTrailer(t) {
     ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.fillRect(-5, -11.5, 10, 1.5);
     ctx.fillStyle = '#7a5a30'; ctx.fillRect(-4, -8, 8, 6); ctx.fillStyle = '#9a7440'; ctx.fillRect(-4, -8, 8, 1.5);
   }
+  drawTanks(t);
   ctx.fillStyle = '#b01010'; ctx.fillRect(-6, 12.5, 2.5, 1); ctx.fillRect(3.5, 12.5, 2.5, 1);
   if (t.dead) { ctx.fillStyle = 'rgba(15,12,10,.62)'; ctx.fillRect(-6.5, -13, 13, 26); }
   ctx.restore();
@@ -1073,7 +1141,7 @@ $('go').onclick = () => modalMode === 'barber' ? closeBarber(true) : startGame()
 function markFog(force) { if (!fogX) return; fogX.fillStyle = '#fff'; fogX.beginPath(); fogX.arc(p.x / FOGC, p.y / FOGC, 450 / FOGC, 0, 7); fogX.fill(); }
 
 function update(dt) {
-  refreshBoxes(); time += dt; fdt = dt; shake *= Math.exp(-8 * dt); dmgFlash *= Math.exp(-3 * dt);
+  refreshBoxes(); time += dt; if (SAFE.dirty && !keys.KeyG) { SAFE.dirty = false; saveSafe(); } fdt = dt; shake *= Math.exp(-8 * dt); dmgFlash *= Math.exp(-3 * dt);
   score += CFG.scoring.alive * dt;
   const PL = p.car;
   comboTick(PL, dt);
@@ -1084,7 +1152,7 @@ function update(dt) {
     updateCar(c, dt, inp); emit(c, dt);
   }
   for (let i = 0; i < cars.length; i++) { const a = cars[i]; if (Math.abs(a.x - p.x) > 700 || Math.abs(a.y - p.y) > 700) continue; for (let j = i + 1; j < cars.length; j++) collideCars(a, cars[j]); }
-  for (const t of trailers.slice()) { if (t.boxT) continue; if (!t.hitched && t.sp < 1 && !t.dead && !t.cargo.length && (Math.abs(t.x - p.x) > 700 || Math.abs(t.y - p.y) > 700)) continue; updateTrailer(t, dt); trailerVsCars(t); if (t.load || t.cargo.length) holdLoad(t); }
+  for (const t of trailers.slice()) { if (t.boxT) continue; if (!t.hitched && t.sp < 1 && !t.dead && !t.cargo.length && (Math.abs(t.x - p.x) > 700 || Math.abs(t.y - p.y) > 700)) continue; updateTrailer(t, dt); trailerVsCars(t); if (t.load || t.cargo.length) holdLoad(t); } carryCargo();
   if (PL && PL.start > 0) { PL.start -= dt; if (PL.start <= 0 && PL.fuel > 0) snd.catch(); }
   let tx, ty, zT, zr = 1.2;
   if (PL) {
@@ -1097,6 +1165,10 @@ function update(dt) {
       const flow = G.flowBase + G.flowWave1 * Math.sin(time * 3.1) + G.flowWave2 * Math.sin(time * 7.3);
       if (c.fuel < 100) { const amt = Math.min(flow * dt, 100 - c.fuel); if (cash >= amt * G.price) { c.fuel += amt; cash -= amt * G.price; pump.cost += amt * G.price; if (Math.random() < .1) snd.fuel(); if (c.fuel >= 100) snd.click(); } else toast('NOT ENOUGH CASH'); }
       else { pump.spill += dt; cash = Math.max(0, cash - dt * G.spillCost); toast('SPILLING! RELEASE G'); }
+    } else if (keys.KeyG && c.sp < 30 && c.fuel < 100 && safePumpDraw(c, dt)) {
+      pump.on = false;                                                       // filling from the safehouse's stored tanks
+    } else if (keys.KeyG && c.sp < 30 && c.fuel < 100 && tankDraw(c, dt)) {
+      pump.on = false;                                                       // siphoning from a loaded fuel tank (free)
     } else if (pump.on) {
       if (c.fuel >= G.perfectAt && pump.spill === 0 && pump.cost > 2) { const r = Math.round(pump.cost * G.refund); cash += r; toast('PERFECT FILL! REFUND $' + r); snd.buy(); }
       pump.on = false;
@@ -1191,7 +1263,7 @@ function audioUpdate(play) {
   let f = 0; if (play) for (const q of cars) if (q.dead) f += .14 * Math.max(0, 1 - dist(q, p) / 380);
   fireG.gain.setTargetAtTime(Math.min(.3, f), t, .15);
   windG.gain.setTargetAtTime(play ? (.02 + .013 * Math.sin(time * .35) + .007 * Math.sin(time * 1.1)) * amb : 0, t, .3);
-  honkSet(!!(run && keys.KeyH));
+  honkSet(!!(run && keys.KeyH), p.car ? p.car.tk : '');
 }
 // ---------- drawing ----------
 function spr(t, sh) { for (const [x, y, w, h, c] of SPR[t]) { ctx.fillStyle = sh ? 'rgba(0,0,0,.3)' : c; ctx.fillRect(x, y, w, h); } }
@@ -1401,7 +1473,7 @@ function drawMinimap() {
   const k = 150 / S.radar, ox = 75 - p.x * k, oy = 75 - p.y * k, sc2 = k / .1;
   mx.fillStyle = '#10202e'; mx.fillRect(0, 0, 150, 150); mx.drawImage(mapT, ox, oy, mapT.width * sc2, mapT.height * sc2); mx.drawImage(mapB, ox, oy, mapB.width * sc2, mapB.height * sc2);
   for (const i of mapIcons()) { const x = ox + i.x * k, y = oy + i.y * k; if (x < 0 || y < 0 || x > 150 || y > 150) continue; drawIcon(mx, x, y, i, i.big ? .8 : .55); }
-  for (const s of SHOPS) if (['gun', 'dealer', 'hospital', 'bank'].includes(s.kind)) edgeArrow(mx, s.x, s.y, SHOPDEF[s.kind][2], SHOPDEF[s.kind][3]);
+  for (const s of SHOPS) if (['gun', 'dealer', 'hospital', 'bank', 'safehouse'].includes(s.kind)) edgeArrow(mx, s.x, s.y, SHOPDEF[s.kind][2], SHOPDEF[s.kind][3]);
   if (wp) { const x = ox + wp.x * k, y = oy + wp.y * k; if (x > 0 && y > 0 && x < 150 && y < 150) { mx.fillStyle = '#ff3df0'; mx.fillRect(x - 1, y - 7, 2, 7); mx.fillRect(x, y - 7, 5, 3); } else edgeArrow(mx, wp.x, wp.y, '#ff3df0', 'WP'); }
   if (wp && route.length > 1) { mx.strokeStyle = '#ff3df0'; mx.lineWidth = 1.6; mx.beginPath(); route.forEach((q, i) => { const x = ox + q.x * k, y = oy + q.y * k; if (i) mx.lineTo(x, y); else mx.moveTo(x, y); }); mx.stroke(); }
   mx.save(); mx.translate(75, 75); mx.rotate(p.a); mx.fillStyle = '#f2e23a'; mx.beginPath(); mx.moveTo(0, -5); mx.lineTo(4, 4); mx.lineTo(-4, 4); mx.closePath(); mx.fill(); mx.strokeStyle = '#000'; mx.stroke(); mx.restore();
@@ -1523,6 +1595,7 @@ function drawCont(c) {
   ctx.restore();
 }
 function drawLow(cx, cy, hw, hh, vx, vy) {
+  drawSafe(cx, cy, hw, hh);
   for (const sh of SHOPS) if (sh.pad && Math.abs(sh.pad.x - cx) < hw + 30 && Math.abs(sh.pad.y - cy) < hh + 30) drawPad(sh);
   for (const L of LIGHTS) if (L.sign && vx(L.x0 - 12, L.x1 - L.x0 + 24) && vy(L.y0 - 12, L.y1 - L.y0 + 24)) {
     const w = L.x1 - L.x0, h = L.y1 - L.y0; ctx.fillStyle = 'rgba(255,255,255,.85)';
@@ -1841,6 +1914,61 @@ function drawRoute() {
 const carOnPad = sh => cars.find(c => c !== p.car && Math.abs(c.x - sh.pad.x) < 18 && Math.abs(c.y - sh.pad.y) < 24 && c.sp < 25);
 
 function sellCar(c) { if (c.strapT) c.strapT.load = null; if (c.trailer) detachTrailer(c); const v = carValue(c), i = cars.indexOf(c); cash += v; if (i >= 0) cars.splice(i, 1); floats.push({ x: c.x, y: c.y - 12, s: '+$' + v, life: 1.4, max: 1.4, cm: true, tier: 2, rot: 0, col: '#4cf06a' }); snd.buy(); toast('CAR SOLD FOR $' + v); }
+// ---------- safehouse (fuel pump upgrade + saved tank grid) ----------
+const SAFE = { owned: false, pumpOn: false, fs: Array(6).fill(null), x: 0, y: 0, w: 0, h: 0, door: null, pump: null, cp: [], gc: { x: 0, y: 0 }, obs: null, dirty: false };
+try { const sv = JSON.parse(localStorage.getItem('gta1safe')); if (sv) { SAFE.owned = !!sv.owned; SAFE.pumpOn = !!sv.pumpOn; if (Array.isArray(sv.cells) && sv.cells.length === 6) SAFE.fs = sv.cells.map(f => typeof f === 'number' ? f : null); } } catch (e) {}
+const saveSafe = () => { try { localStorage.setItem('gta1safe', JSON.stringify({ owned: SAFE.owned, pumpOn: SAFE.pumpOn, cells: SAFE.fs })); } catch (e) {} };
+const SAFE_ICON = '<svg viewBox="0 0 24 24"><g stroke="#000" stroke-width=".8"><path d="M3 12 L12 4 L21 12 Z" fill="#9a4a3a"/><rect x="5" y="12" width="14" height="9" fill="#8a7358"/><rect x="10" y="15" width="4" height="6" fill="#3a2a1a"/></g></svg>';
+const safeStock = () => SAFE.fs.reduce((a, f) => a + (f || 0), 0);
+const atSafePump = c => SAFE.pumpOn && SAFE.w && SAFE.pump && Math.hypot(c.x - SAFE.pump.x, c.y - SAFE.pump.y) < 34;
+const nearGrid = () => { if (!SAFE.pumpOn || !SAFE.w) return false; const r = p.car || p; return Math.hypot(r.x - SAFE.gc.x, r.y - SAFE.gc.y) < CFG.safehouse.reach; };
+function installPump() { const q = SAFE.pump, o = { x: q.x - 4, y: q.y - 8, w: 8, h: 16 }; obsAdd(o, o.x, o.y, o.x + 8, o.y + 16); }
+function placeSafehouse() {                                          // compound on the reserved block beside the spawn crossroads; the yard fills in as you upgrade it
+  if (SAFE.obs === OBS) return; SAFE.obs = OBS; SAFE.w = 0; if (!SAFE_Z) return;
+  const Z = SAFE_Z, W = Math.round(Math.min(170, Z.w - 8)), H = Math.round(Math.min(112, Z.h - 8)), x = Math.round(Z.x + (Z.w - W) / 2), y = Math.round(Z.y + (Z.h - H) / 2);
+  Object.assign(SAFE, { x, y, w: W, h: H });
+  const bd = { x: x + 12, y: y + 8, w: Math.min(100, W - 24), h: 42, col: '#6d5a48', det: [], label: 'SAFEHOUSE' }; BLDS.push(bd); obsAdd(bd, bd.x, bd.y, bd.x + bd.w, bd.y + bd.h);
+  SAFE.door = { kind: 'safehouse', x: Math.round(bd.x + bd.w / 2), y: bd.y + bd.h + 12, sx: 0, sy: 0, pad: null, doors: null }; SHOPS.push(SAFE.door);
+  SAFE.pump = { x: x + W - 22, y: y + 76 }; SAFE.cp = []; for (let j = 0; j < 2; j++) for (let i = 0; i < 3; i++) SAFE.cp.push({ x: x + 26 + i * 32, y: y + 66 + j * 28 });
+  SAFE.gc = { x: x + 58, y: y + 80 }; if (SAFE.pumpOn) installPump();
+}
+function safeRows() {
+  const C = CFG.safehouse;
+  if (!SAFE.owned) return [{ icon: SAFE_ICON, name: 'BUY THE SAFEHOUSE', sub: 'YOUR OWN COMPOUND NEAR TOWN. UPGRADE IT WITH A FUEL PUMP.', price: C.price, ok: () => cash >= C.price, buy: () => { cash -= C.price; SAFE.owned = true; saveSafe(); toast('SAFEHOUSE PURCHASED'); return true; } }];
+  if (!SAFE.pumpOn) return [{ icon: SAFE_ICON, name: 'FUEL PUMP', sub: 'ADDS A PUMP + A 6-TANK DROP-OFF GRID. HAUL FUEL TANKS HERE WITH A PICKUP OR TRAILER.', price: C.pumpPrice, ok: () => cash >= C.pumpPrice, buy: () => { cash -= C.pumpPrice; SAFE.pumpOn = true; installPump(); saveSafe(); toast('FUEL PUMP INSTALLED'); return true; } }];
+  return [{ icon: SAFE_ICON, name: 'FUEL PUMP', free: true, lab: 'INSTALLED', sub: 'STOCK ' + Math.round(safeStock()) + ' UNITS IN ' + SAFE.fs.filter(f => f !== null).length + '/6 TANKS<br>[T] UNLOAD A TANK AT THE GRID, [Y] TAKE ONE, HOLD [G] AT THE PUMP' }];
+}
+function gridPool(want) {                                            // vehicles/trailers near the grid: those carrying tanks (want 'have') or with room (want 'room')
+  const out = [], g = SAFE.gc, R = CFG.safehouse.reach;
+  const t = v => { if (v.dead || Math.hypot(v.x - g.x, v.y - g.y) > R) return; const cap = tankSlots(v).length; if (!cap) return; if (want === 'have' ? v.tanks.length : (v.tanks.length < cap && !(v.isTrailer && (v.load || v.boxT)))) out.push(v); };
+  for (const c of cars) t(c); for (const u of trailers) t(u); return out.sort((a, b) => Math.hypot(a.x - g.x, a.y - g.y) - Math.hypot(b.x - g.x, b.y - g.y));
+}
+function gridUnload() {
+  const v = gridPool('have')[0]; if (!v) { toast('NO TANKS TO UNLOAD - PARK A LOADED PICKUP OR TRAILER BY THE GRID'); return; }
+  const i = SAFE.fs.findIndex(f => f === null); if (i < 0) { toast('THE GRID IS FULL (6 TANKS)'); return; }
+  SAFE.fs[i] = v.tanks.pop(); saveSafe(); snd.door(); toast('TANK STORED - STOCK ' + Math.round(safeStock()) + ' UNITS');
+}
+function gridTake() {
+  if (!nearGrid()) return; const i = SAFE.fs.reduce((b, f, k) => f !== null && (b < 0 || f > SAFE.fs[b]) ? k : b, -1); if (i < 0) { toast('THE GRID IS EMPTY'); return; }
+  const v = gridPool('room')[0]; if (!v) { toast('PARK A PICKUP OR FLATBED TRAILER WITH ROOM BY THE GRID'); return; }
+  v.tanks.push(SAFE.fs[i]); SAFE.fs[i] = null; saveSafe(); snd.door(); toast('TANK LOADED ON ' + (v.isTrailer ? 'THE TRAILER' : v.ty.name));
+}
+function safePumpDraw(c, dt) {                                       // the safehouse pump pours from the stored tanks, free of charge
+  if (!atSafePump(c)) return false; const i = SAFE.fs.findIndex(f => f !== null && f > .01); if (i < 0) { if (Math.random() < .02) toast('THE SAFEHOUSE TANKS ARE EMPTY - BRING MORE FUEL'); return false; }
+  const amt = Math.min(CFG.safehouse.flow * dt, 100 - c.fuel, SAFE.fs[i]); c.fuel += amt; SAFE.fs[i] -= amt; SAFE.dirty = true; if (Math.random() < .1) snd.fuel(); if (c.fuel >= 100) snd.click(); return true;
+}
+function drawSafe(cx, cy, hw, hh) {
+  if (!SAFE.w || Math.abs(SAFE.x + SAFE.w / 2 - cx) > hw + SAFE.w || Math.abs(SAFE.y + SAFE.h / 2 - cy) > hh + SAFE.h) return;
+  const { x, y, w, h } = SAFE; ctx.fillStyle = 'rgba(70,74,80,.85)'; ctx.fillRect(x, y + 54, w, h - 54); ctx.fillStyle = 'rgba(110,114,120,.5)'; ctx.fillRect(x, y + 50, w, 4);
+  ctx.strokeStyle = 'rgba(232,192,64,.8)'; ctx.lineWidth = 1.2; ctx.setLineDash([6, 5]); ctx.strokeRect(x + .5, y + 54.5, w - 1, h - 55); ctx.setLineDash([]);
+  ctx.textAlign = 'center'; ctx.font = 'bold 8px "Courier New",monospace';
+  if (!SAFE.owned && SAFE.door) { ctx.fillStyle = '#e8c040'; ctx.fillRect(SAFE.door.x - 22, SAFE.door.y - 22, 44, 11); ctx.fillStyle = '#222'; ctx.fillText('FOR SALE', SAFE.door.x, SAFE.door.y - 14); return; }
+  if (!SAFE.pumpOn) return;
+  SAFE.cp.forEach((q, i) => { ctx.strokeStyle = 'rgba(232,192,64,.9)'; ctx.lineWidth = 1.2; ctx.strokeRect(q.x - 12, q.y - 12, 24, 24); const f = SAFE.fs[i]; if (f === null) return;
+    ctx.fillStyle = '#6a140c'; ctx.beginPath(); ctx.arc(q.x, q.y, 9, 0, 7); ctx.fill(); ctx.fillStyle = f > .01 ? '#d8321f' : '#6a4a44'; ctx.beginPath(); ctx.arc(q.x, q.y, 7.8, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.3)'; ctx.fillRect(q.x - 5, q.y - 5, 5, 1.5); ctx.fillStyle = '#222'; ctx.fillRect(q.x - 1.5, q.y - 1.5, 3, 3); ctx.fillStyle = '#111'; ctx.fillRect(q.x - 8, q.y + 10.5, 16, 2.5); ctx.fillStyle = '#4af060'; ctx.fillRect(q.x - 8, q.y + 10.5, 16 * Math.min(1, f / CFG.fuelTank.fill), 2.5); });
+  const q = SAFE.pump; ctx.fillStyle = '#222'; ctx.fillRect(q.x - 5, q.y - 9, 10, 18); ctx.fillStyle = '#d8321f'; ctx.fillRect(q.x - 4, q.y - 8, 8, 16); ctx.fillStyle = '#e8e8e8'; ctx.fillRect(q.x - 3, q.y - 6, 6, 4); ctx.fillStyle = '#222'; ctx.fillRect(q.x + 4, q.y - 2, 3, 1.5); ctx.fillRect(q.x + 6, q.y - 2, 1.5, 6);
+}
 function drawPad(sh) {
   const pd = sh.pad, pu = (Math.sin(time * 4) + 1) / 2; ctx.fillStyle = 'rgba(60,220,90,.22)'; ctx.fillRect(pd.x - 18, pd.y - 24, 36, 48); ctx.strokeStyle = `rgba(80,255,110,${.6 + .4 * pu})`; ctx.lineWidth = 1.5; ctx.strokeRect(pd.x - 18, pd.y - 24, 36, 48);
   ctx.fillStyle = '#4cf06a'; ctx.font = 'bold 26px "Courier New",monospace'; ctx.textAlign = 'center'; ctx.fillText('$', pd.x, pd.y + 9);
@@ -2297,6 +2425,8 @@ addEventListener('keydown', e => {
     if (state === 'play') {
       if (e.code === 'KeyE') useKey();
       if (e.code === 'KeyQ' && p.car) towKey();
+      if (e.code === 'KeyT') loadTank();
+      if (e.code === 'KeyY') gridTake();
       if (e.code === 'KeyL' && p.car && p.car.tk === 'work') { p.car.light = !p.car.light; snd.click(); toast(p.car.light ? 'AMBER LIGHT ON' : 'AMBER LIGHT OFF'); }
       if (e.code === 'KeyQ' && !p.car && inv[sel] && p.qT <= 0) p.qT = .0001;                       // tap = drop, hold 0.3s = throw meter
       if (e.code === 'Tab' || e.code === 'KeyI') toggleInv();
@@ -2344,7 +2474,7 @@ function loop(now) {
     cb.style.transform = 'translateX(-50%) scale(' + (big * pulse).toFixed(3) + ') rotate(' + (Math.sin(time * 9) * 1.5 + popT * 6 * Math.sin(time * 30)).toFixed(2) + 'deg)';
     cb.style.color = ['#ffe23a', '#ff9a1f', '#ff5a2a', '#ff2aa0', '#b04cf0'][Math.min(4, combo.mult - 1)]; cb.innerHTML = 'DRIFT x' + combo.mult + '<br><span style="font-size:26px;color:#fff">+' + Math.round(dispPts) + '</span>';
   } else { cb.style.opacity = 0; dispPts = 0; lastMult = 1; popT = 0; }
-  if (play && c && atPump(c)) { pumpEl.style.display = 'block'; pumpEl.innerHTML = 'FUEL PUMP - HOLD G, RELEASE IN THE GREEN<div class="pb"><i style="width:' + c.fuel + '%"></i><b></b></div>' + (pump.on ? 'FILLING... $' + pump.cost.toFixed(1) : 'READY') + (pump.spill > 0 ? ' - SPILLING!' : ''); } else pumpEl.style.display = 'none';
+  if (play && c && atPump(c)) { pumpEl.style.display = 'block'; pumpEl.innerHTML = 'FUEL PUMP - HOLD G, RELEASE IN THE GREEN<div class="pb"><i style="width:' + c.fuel + '%"></i><b></b></div>' + (pump.on ? 'FILLING... $' + pump.cost.toFixed(1) : 'READY') + (pump.spill > 0 ? ' - SPILLING!' : '') + (tankTarget() ? '<br>[T] LOAD ($' + CFG.fuelTank.price + ') OR REFILL A FUEL TANK' : ''); } else if (play && SAFE.pumpOn && SAFE.w && (nearGrid() || (c && atSafePump(c)))) { pumpEl.style.display = 'block'; pumpEl.innerHTML = 'SAFEHOUSE FUEL' + (c && atSafePump(c) ? ' - HOLD G TO FILL<div class="pb"><i style="width:' + c.fuel + '%"></i></div>' : '<br>') + 'STOCK ' + Math.round(safeStock()) + ' UNITS (' + SAFE.fs.filter(f => f !== null).length + '/6 TANKS)<br>[T] UNLOAD TANK  [Y] TAKE TANK'; } else pumpEl.style.display = 'none';
   msgT -= dt; const np = nearestPick(), nc = nearestCar(), ns = nearShop(), lad = LADS.find(l => p.roof ? (p.roof === l.bd && dist(p, l.t) < 18) : dist(p, l.g) < 18);
   const padSh = SHOPS.find(q => q.pad && Math.hypot(p.x - q.pad.x, p.y - q.pad.y) < 36), padCar = padSh && carOnPad(padSh), onPad = padSh && c && Math.abs(c.x - padSh.pad.x) < 20 && Math.abs(c.y - padSh.pad.y) < 26;
   const pt = !play ? '' : msgT > 0 ? msg : edgeDist() < 16 ? 'DANGER - ROOF EDGE! YOU MIGHT FALL' : (!c && it && it.cock) ? (it.t === 'sniper' ? 'WORK THE BOLT - CLICK' : 'CLICK TO COCK')
