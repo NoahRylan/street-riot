@@ -148,7 +148,8 @@
     <div class="pk" id="pkSkin"><span class="lab">SKIN</span><canvas width="84" height="84"></canvas><input type="range" min="25" max="85" value="72"></div>
     <div class="pk"><span class="lab">PREVIEW</span><canvas id="pv" width="84" height="84" style="cursor:default"></canvas></div>
   </div>
-  <button class="btn" id="go">START</button><button class="btn off" id="cancelB" style="display:none">LEAVE</button>
+  <div id="bbName" style="display:none;margin:6px 0"><span class="lab">NAME</span> <input class="in" id="nm2" maxlength="10" autocomplete="off"></div>
+  <button class="btn" id="cont" style="display:none">CONTINUE SAVE</button><button class="btn" id="go">START</button><button class="btn off" id="cancelB" style="display:none">LEAVE</button>
   <div id="mh"></div>
   <div id="mc">Own the safehouse ($20,000) and add its fuel pump ($10,000): unload fuel tanks at its grid with T, take them with Y, hold G at the pump to fill from them. Press T at a gas pump to load or refill a fuel tank onto a pickup bed or flatbed trailer (hold G anywhere to refuel from it). Semis haul a box trailer (press E at its rear to open/close the doors - closing locks any vehicles inside). Pickups can tow trailers: back up to one and press Q to hitch or unhitch. Drive a car onto a car trailer, get out and press E to strap it down. White work trucks have a ram bumper - press L for the amber light. Smash trash cans and crates for loot. Climb ladders to roofs. Beware the zombies - an infection kills you and turns you into one.</div>
 </div></div>
@@ -186,7 +187,7 @@ const CFG = {
     driftMinSpeed: 55, driftMinSlip: 26, comboBreakImpact: 10, crashMin: 25, crashBase: 20, crashMult: .2, wallMin: 35, wallBase: 30, wallMult: .2, startTime: .85, stutterTime: 1.9, stutterChance: .3 },
   traffic: { count: 16, perTick: 2, minDist: 550, maxDist: 950, despawn: 1700, near: 1300, initial: 12 },
   fuelTank: { price: 500, fill: 400, reach: 80, flow: 14, blast: .6, refillMult: 1 },   // refillMult x gas price per unit = cost to top up a partly used tank at a station
-  safehouse: { price: 20000, pumpPrice: 10000, flow: 16, reach: 80 },   // loadable at pumps onto pickup beds / flatbed trailers
+  safehouse: { price: 20000, pumpPrice: 10000, spotPrice: 3000, healPrice: 10000, curePrice: 10000, barberPrice: 5000, stashMax: 20, flow: 16, reach: 80 },   // loadable at pumps onto pickup beds / flatbed trailers
   gas: { price: .5, flowBase: 14, flowWave1: 11, flowWave2: 4, perfectAt: 94, refund: .25, spillCost: 7 },
   shop: { guns: { pistol: 120, smg: 300, rifle: 450, shotgun: 280, sawn: 180, bazooka: 800, crowbar: 40, grenade: 150, a9: 30, a76: 45, shell: 30, rocket: 120 },
     sellFactor: .5, sellValues: { pistol: 120, smg: 300, rifle: 450, shotgun: 280, sawn: 180, bazooka: 800, crowbar: 40, sniper: 600, grenade: 50, a9: 1.25, a76: 1.5, shell: 3.75, rocket: 40 },
@@ -616,14 +617,15 @@ function carAt(x, y, m = 0) {
 }
 function exitCar() { const c = p.car; p.x = c.x - Math.cos(c.a) * 18; p.y = c.y - Math.sin(c.a) * 18; p.vx = p.vy = 0; p.car = null; snd.door(); }
 // ---------- shops ----------
-function openShop(sh) { if (sh.kind === 'mall') { haunt(sh); return; } if (sh.kind === 'barber') { openBarber(); return; } shopCur = sh; shopTab = 'buy'; state = 'shop'; renderShop(); $('shop').style.display = 'flex'; snd.door(); }
-function openBarber() { lookBackup = JSON.parse(JSON.stringify(look)); modalMode = 'barber'; state = 'barber'; $('startOnly').style.display = 'none'; $('mt').textContent = 'BARBER'; $('ms').textContent = 'PICK A NEW LOOK - $' + CFG.shop.barberFee; $('go').textContent = 'PAY $' + CFG.shop.barberFee; $('cancelB').style.display = 'inline-block'; $('mh').textContent = ''; $('modal').style.display = 'flex'; snd.door(); }
+function openShop(sh) { if (sh.kind === 'mall') { haunt(sh); return; } if (sh.kind === 'barber') { openBarber(); return; } shopCur = sh; shopTab = 'buy'; if (sh.kind === 'safehouse' && SAFE.owned) saveGame(); state = 'shop'; renderShop(); $('shop').style.display = 'flex'; snd.door(); }
+let barberFree = false;
+function openBarber(free) { barberFree = !!free; $('cont').style.display = 'none'; $('bbName').style.display = 'block'; $('nm2').value = name; lookBackup = JSON.parse(JSON.stringify(look)); modalMode = 'barber'; state = 'barber'; $('startOnly').style.display = 'none'; $('mt').textContent = 'BARBER'; $('ms').textContent = 'PICK A NEW LOOK AND NAME - ' + (barberFree ? 'FREE' : '$' + CFG.shop.barberFee); $('go').textContent = barberFree ? 'APPLY' : 'PAY $' + CFG.shop.barberFee; $('cancelB').style.display = 'inline-block'; $('mh').textContent = ''; $('modal').style.display = 'flex'; snd.door(); }
 function closeBarber(apply) {
-  if (apply) { if (cash < CFG.shop.barberFee) { $('ms').textContent = 'NOT ENOUGH CASH ($' + CFG.shop.barberFee + ')'; snd.full(); return; } cash -= CFG.shop.barberFee; snd.buy(); }
+  if (apply) { const fee = barberFree ? 0 : CFG.shop.barberFee; if (cash < fee) { $('ms').textContent = 'NOT ENOUGH CASH ($' + fee + ')'; snd.full(); return; } cash -= fee; name = ($('nm2').value.trim() || name).toUpperCase().slice(0, 10); $('nm').value = name; snd.buy(); }
   else for (const k of ['shirt', 'hair', 'skin']) { Object.assign(look[k], lookBackup[k]); PK[k].sl.value = look[k].l; PK[k].draw(); }
-  updLook(); modalMode = 'start'; state = 'play'; $('modal').style.display = 'none'; $('startOnly').style.display = ''; $('cancelB').style.display = 'none'; $('go').textContent = 'START'; $('mt').textContent = 'STREET RIOT';
+  updLook(); modalMode = 'start'; state = 'play'; $('bbName').style.display = 'none'; refreshCont(); $('modal').style.display = 'none'; $('startOnly').style.display = ''; $('cancelB').style.display = 'none'; $('go').textContent = 'START'; $('mt').textContent = 'STREET RIOT';
 }
-function closeShop() { state = 'play'; $('shop').style.display = 'none'; }
+function closeShop() { if (shopCur && shopCur.kind === 'safehouse' && SAFE.owned && state === 'shop') saveGame(); state = 'play'; $('shop').style.display = 'none'; }
 const sbar = (l, v, m, col) => `<span style="display:inline-block;width:32px;font-size:9px;color:#bbb">${l}</span><span style="display:inline-block;width:56px;height:6px;background:#222;margin-right:6px;vertical-align:middle"><i style="display:block;height:100%;width:${Math.min(100, v / m * 100)}%;background:${col}"></i></span>`;
 const SELLP = CFG.shop.sellValues;
 function shopRows(k, tab) {
@@ -639,7 +641,7 @@ function shopRows(k, tab) {
     ok: () => T.price && cash >= T.price, buy: () => { let sy = shopCur.sy; while (cars.some(c => Math.hypot(c.x - shopCur.sx, c.y - sy) < 22)) sy += 24; cars.push(mkCar(shopCur.sx, sy, 0, key, 100)); cash -= T.price; return true; } }; }).concat([dealerTrailerRow('utility', 'UTILITY TRAILER', CFG.trucks.trailerPrice), dealerTrailerRow('car', 'CAR TRAILER', CFG.trucks.carTrailerPrice)]);
   if (k === 'hospital') return [{ icon: ICON.heal, name: 'FULL HEAL', price: SH.hospitalHeal, ok: () => cash >= SH.hospitalHeal && hp < maxHP(), buy: () => { hp = maxHP(); cash -= SH.hospitalHeal; return true; } },
     { icon: ICON.heal, name: 'CURE INFECTION + HEAL', price: SH.hospitalCure, ok: () => cash >= SH.hospitalCure && (p.inf > 0 || hp < maxHP()), buy: () => { hp = maxHP(); p.inf = 0; cash -= SH.hospitalCure; return true; } }];
-  if (k === 'safehouse') return safeRows();
+  if (k === 'safehouse') return safeRows(tab);
   const [b1, b2] = SH.bankSteps;
   const dep = a => ({ icon: ICON.cash, name: a < 0 ? 'DEPOSIT ALL' : 'DEPOSIT $' + a, price: '', btn: 'DEPOSIT', ok: () => cash >= (a < 0 ? 1 : a), buy: () => { const m = a < 0 ? Math.floor(cash) : a; cash -= m; bank += m; return true; } });
   const wd = a => ({ icon: ICON.cash, name: a < 0 ? 'WITHDRAW ALL' : 'WITHDRAW $' + a, price: '', btn: 'WITHDRAW', ok: () => bank >= (a < 0 ? 1 : a), buy: () => { const m = a < 0 ? Math.floor(bank) : a; bank -= m; cash += m; return true; } });
@@ -647,8 +649,9 @@ function shopRows(k, tab) {
 }
 function renderShop() {
   const k = shopCur.kind; $('shT').textContent = shopCur.atm ? 'ATM' : SHOPDEF[k][1];
-  $('shC').textContent = 'CASH $' + Math.floor(cash) + (k === 'bank' ? '   BANK $' + Math.floor(bank) + ' (SAFE IF YOU DIE)' : '') + (k === 'dealer' ? '   - TO SELL A CAR, PARK IT ON THE $ PAD' : '');
-  $('shTabs').innerHTML = k === 'gun' ? `<button class="btn${shopTab === 'buy' ? '' : ' off'}" data-t="buy">BUY</button><button class="btn${shopTab === 'sell' ? '' : ' off'}" data-t="sell">SELL</button>` : '';
+  $('shC').textContent = 'CASH $' + Math.floor(cash) + (k === 'safehouse' && SAFE.owned ? '   STASH $' + Math.floor(SAFE.cash) + ' - ITEMS ' + SAFE.items.length + '/' + CFG.safehouse.stashMax : '') + (k === 'bank' ? '   BANK $' + Math.floor(bank) + ' (SAFE IF YOU DIE)' : '') + (k === 'dealer' ? '   - TO SELL A CAR, PARK IT ON THE $ PAD' : '');
+  const TB = k === 'gun' ? [['buy', 'BUY'], ['sell', 'SELL']] : k === 'safehouse' && SAFE.owned ? [['buy', 'UPGRADES'], ['cash', 'STASH']] : [];
+  $('shTabs').innerHTML = TB.map(([t, l]) => `<button class="btn${shopTab === t ? '' : ' off'}" data-t="${t}">${l}</button>`).join(''); $('shL').style.cssText = 'max-height:60vh;overflow-y:auto';
   $('shTabs').onclick = e => { const b = e.target.closest('button'); if (b) { shopTab = b.dataset.t; renderShop(); } };
   const R = shopRows(k, shopTab);
   $('shL').innerHTML = R.map((r, i) => `<div class="row"><span class="ic">${r.icon}</span><span class="nm">${r.name}${r.sub ? '<br><span style="font-weight:normal">' + r.sub + '</span>' : ''}</span><span class="pr">${r.lab !== undefined ? r.lab : r.free ? 'STARTER' : typeof r.price === 'number' ? '$' + r.price : ''}</span>${r.free ? '' : `<button data-i="${i}" ${r.ok() ? '' : 'disabled'}>${r.btn || 'BUY'}</button>`}</div>`).join('');
@@ -1111,7 +1114,7 @@ function drawTrailer(t) {
 // ---------- game flow ----------
 function showDeath(title, sub) {
   state = 'dead'; mouseDown = false; p.qT = p.gT = 0; scoped = false; for (const k in keys) keys[k] = false; saveHi(); modalMode = 'start';
-  $('startOnly').style.display = ''; $('cancelB').style.display = 'none'; $('mt').textContent = title; $('ms').textContent = sub; $('nm').value = name; $('go').textContent = 'RESPAWN'; $('mh').textContent = hiText(); $('modal').style.display = 'flex'; $('nm').focus();
+  $('startOnly').style.display = ''; $('cancelB').style.display = 'none'; $('mt').textContent = title; $('ms').textContent = sub; $('nm').value = name; $('go').textContent = 'RESPAWN'; $('mh').textContent = hiText(); $('modal').style.display = 'flex'; refreshCont(); $('nm').focus();
 }
 function die() {                                                              // dropped items stay where you fell; the bank keeps your savings
   if (p.car) exitCar(); p.roof = null;
@@ -1130,14 +1133,14 @@ function newWorld(seed) {
   const same = seed === SEED && worldReady, keepDrops = same ? pickups.filter(k => k.drop) : [], keepZ = same ? NPCS.filter(n => n.keep) : [];
   SEED = seed; mall.on = false; genWorld(seed); pickups = keepDrops; NPCS = keepZ; BIRDS = []; projs = []; parts = []; floats = []; scorch = []; wp = null;
   p.x = START.x; p.y = START.y; p.vx = p.vy = 0; p.car = null; p.roof = null; p.inf = 0; cam.x = p.x; cam.y = p.y;
-  spawnInitialCars(); scatterCash(); spawnRoofSnipers(); stock(300); markFog(true); populate();
+  spawnInitialCars(); scatterCash(); spawnRoofSnipers(); stock(300); markFog(true); populate(); spawnParked();
 }
 function startGame() {
   initAudio(); name = ($('nm').value.trim() || 'PLAYER').toUpperCase().slice(0, 10); S.zombies = !!$('optZ').checked; S.bandits = !!$('optB').checked;
   hp = CFG.player.hp; pup.life = pup.regen = pup.speed = 0; bonusT = CFG.bonuses.firstDelay; lastPups = ''; score = 0; cash = 0; driftAcc = 0; inv.fill(null); sel = 0; p.qT = p.gT = 0; newWorld(parseInt($('sd').value) || 1337);
   renderInv(); updLook(); state = 'play'; modalMode = 'start'; $('modal').style.display = 'none'; $('nm').blur();
 }
-$('go').onclick = () => modalMode === 'barber' ? closeBarber(true) : startGame(); $('cancelB').onclick = () => closeBarber(false); $('mh').textContent = hiText();
+$('cont').onclick = continueGame; $('go').onclick = () => modalMode === 'barber' ? closeBarber(true) : startGame(); $('cancelB').onclick = () => closeBarber(false); $('mh').textContent = hiText();
 function markFog(force) { if (!fogX) return; fogX.fillStyle = '#fff'; fogX.beginPath(); fogX.arc(p.x / FOGC, p.y / FOGC, 450 / FOGC, 0, 7); fogX.fill(); }
 
 function update(dt) {
@@ -1915,9 +1918,9 @@ const carOnPad = sh => cars.find(c => c !== p.car && Math.abs(c.x - sh.pad.x) < 
 
 function sellCar(c) { if (c.strapT) c.strapT.load = null; if (c.trailer) detachTrailer(c); const v = carValue(c), i = cars.indexOf(c); cash += v; if (i >= 0) cars.splice(i, 1); floats.push({ x: c.x, y: c.y - 12, s: '+$' + v, life: 1.4, max: 1.4, cm: true, tier: 2, rot: 0, col: '#4cf06a' }); snd.buy(); toast('CAR SOLD FOR $' + v); }
 // ---------- safehouse (fuel pump upgrade + saved tank grid) ----------
-const SAFE = { owned: false, pumpOn: false, fs: Array(6).fill(null), x: 0, y: 0, w: 0, h: 0, door: null, pump: null, cp: [], gc: { x: 0, y: 0 }, obs: null, dirty: false };
-try { const sv = JSON.parse(localStorage.getItem('gta1safe')); if (sv) { SAFE.owned = !!sv.owned; SAFE.pumpOn = !!sv.pumpOn; if (Array.isArray(sv.cells) && sv.cells.length === 6) SAFE.fs = sv.cells.map(f => typeof f === 'number' ? f : null); } } catch (e) {}
-const saveSafe = () => { try { localStorage.setItem('gta1safe', JSON.stringify({ owned: SAFE.owned, pumpOn: SAFE.pumpOn, cells: SAFE.fs })); } catch (e) {} };
+const SAFE = { owned: false, pumpOn: false, sp: Array(6).fill(false), park: Array(6).fill(null), ps: [], cash: 0, items: [], heal: 0, barber: false, fs: Array(6).fill(null), x: 0, y: 0, w: 0, h: 0, door: null, pump: null, cp: [], gc: { x: 0, y: 0 }, obs: null, dirty: false };
+try { const sv = JSON.parse(localStorage.getItem('gta1safe')); if (sv) { SAFE.owned = !!sv.owned; SAFE.pumpOn = !!sv.pumpOn; if (Array.isArray(sv.sp) && sv.sp.length === 6) SAFE.sp = sv.sp.map(Boolean); if (Array.isArray(sv.park) && sv.park.length === 6) SAFE.park = sv.park; SAFE.cash = +sv.cash || 0; SAFE.items = Array.isArray(sv.items) ? sv.items : []; SAFE.heal = sv.heal | 0; SAFE.barber = !!sv.barber; if (Array.isArray(sv.cells) && sv.cells.length === 6) SAFE.fs = sv.cells.map(f => typeof f === 'number' ? f : null); } } catch (e) {}
+const saveSafe = () => { try { localStorage.setItem('gta1safe', JSON.stringify({ owned: SAFE.owned, pumpOn: SAFE.pumpOn, cells: SAFE.fs, sp: SAFE.sp, park: SAFE.park, cash: SAFE.cash, items: SAFE.items, heal: SAFE.heal, barber: SAFE.barber })); } catch (e) {} };
 const SAFE_ICON = '<svg viewBox="0 0 24 24"><g stroke="#000" stroke-width=".8"><path d="M3 12 L12 4 L21 12 Z" fill="#9a4a3a"/><rect x="5" y="12" width="14" height="9" fill="#8a7358"/><rect x="10" y="15" width="4" height="6" fill="#3a2a1a"/></g></svg>';
 const safeStock = () => SAFE.fs.reduce((a, f) => a + (f || 0), 0);
 const atSafePump = c => SAFE.pumpOn && SAFE.w && SAFE.pump && Math.hypot(c.x - SAFE.pump.x, c.y - SAFE.pump.y) < 34;
@@ -1925,19 +1928,51 @@ const nearGrid = () => { if (!SAFE.pumpOn || !SAFE.w) return false; const r = p.
 function installPump() { const q = SAFE.pump, o = { x: q.x - 4, y: q.y - 8, w: 8, h: 16 }; obsAdd(o, o.x, o.y, o.x + 8, o.y + 16); }
 function placeSafehouse() {                                          // compound on the reserved block beside the spawn crossroads; the yard fills in as you upgrade it
   if (SAFE.obs === OBS) return; SAFE.obs = OBS; SAFE.w = 0; if (!SAFE_Z) return;
-  const Z = SAFE_Z, W = Math.round(Math.min(170, Z.w - 8)), H = Math.round(Math.min(112, Z.h - 8)), x = Math.round(Z.x + (Z.w - W) / 2), y = Math.round(Z.y + (Z.h - H) / 2);
+  const Z = SAFE_Z, W = Math.round(Math.min(170, Z.w - 8)), H = Math.round(Math.min(184, Z.h - 8)), x = Math.round(Z.x + (Z.w - W) / 2), y = Math.round(Z.y + (Z.h - H) / 2);
   Object.assign(SAFE, { x, y, w: W, h: H });
   const bd = { x: x + 12, y: y + 8, w: Math.min(100, W - 24), h: 42, col: '#6d5a48', det: [], label: 'SAFEHOUSE' }; BLDS.push(bd); obsAdd(bd, bd.x, bd.y, bd.x + bd.w, bd.y + bd.h);
   SAFE.door = { kind: 'safehouse', x: Math.round(bd.x + bd.w / 2), y: bd.y + bd.h + 12, sx: 0, sy: 0, pad: null, doors: null }; SHOPS.push(SAFE.door);
   SAFE.pump = { x: x + W - 22, y: y + 76 }; SAFE.cp = []; for (let j = 0; j < 2; j++) for (let i = 0; i < 3; i++) SAFE.cp.push({ x: x + 26 + i * 32, y: y + 66 + j * 28 });
-  SAFE.gc = { x: x + 58, y: y + 80 }; if (SAFE.pumpOn) installPump();
+  SAFE.gc = { x: x + 58, y: y + 80 }; SAFE.ps = [0, 1, 2, 3, 4, 5].map(i => ({ x: x + 17.5 + i * 27, y: y + 150 })); if (SAFE.pumpOn) installPump();
 }
-function safeRows() {
-  const C = CFG.safehouse;
-  if (!SAFE.owned) return [{ icon: SAFE_ICON, name: 'BUY THE SAFEHOUSE', sub: 'YOUR OWN COMPOUND NEAR TOWN. UPGRADE IT WITH A FUEL PUMP.', price: C.price, ok: () => cash >= C.price, buy: () => { cash -= C.price; SAFE.owned = true; saveSafe(); toast('SAFEHOUSE PURCHASED'); return true; } }];
-  if (!SAFE.pumpOn) return [{ icon: SAFE_ICON, name: 'FUEL PUMP', sub: 'ADDS A PUMP + A 6-TANK DROP-OFF GRID. HAUL FUEL TANKS HERE WITH A PICKUP OR TRAILER.', price: C.pumpPrice, ok: () => cash >= C.pumpPrice, buy: () => { cash -= C.pumpPrice; SAFE.pumpOn = true; installPump(); saveSafe(); toast('FUEL PUMP INSTALLED'); return true; } }];
-  return [{ icon: SAFE_ICON, name: 'FUEL PUMP', free: true, lab: 'INSTALLED', sub: 'STOCK ' + Math.round(safeStock()) + ' UNITS IN ' + SAFE.fs.filter(f => f !== null).length + '/6 TANKS<br>[T] UNLOAD A TANK AT THE GRID, [Y] TAKE ONE, HOLD [G] AT THE PUMP' }];
+function safeRows(tab) {
+  const C = CFG.safehouse, R = [], row = (name, sub, price, ok, buy, btn) => ({ icon: SAFE_ICON, name, sub, price, ok, buy, btn });
+  if (!SAFE.owned) return [row('BUY THE SAFEHOUSE', 'HARD SAVE POINT, CASH + ITEM STASH, 6 SECURE PARKING SPOTS, HEALING, BARBER AND FUEL PUMP UPGRADES.', C.price, () => cash >= C.price, () => { cash -= C.price; SAFE.owned = true; saveSafe(); saveGame(); toast('SAFEHOUSE PURCHASED'); return true; })];
+  if (tab === 'cash') {
+    const dep = a => row(a < 0 ? 'STASH ALL CASH' : 'STASH $' + a, '', '', () => cash >= (a < 0 ? 1 : a), () => { const m = a < 0 ? Math.floor(cash) : a; cash -= m; SAFE.cash += m; saveSafe(); return true; }, 'STASH');
+    const wd = a => row(a < 0 ? 'TAKE ALL CASH' : 'TAKE $' + a, '', '', () => SAFE.cash >= (a < 0 ? 1 : a), () => { const m = a < 0 ? Math.floor(SAFE.cash) : a; SAFE.cash -= m; cash += m; saveSafe(); return true; }, 'TAKE');
+    R.push(dep(1000), dep(-1), wd(1000), wd(-1));
+    inv.forEach((it, i) => { if (it) R.push({ icon: ICON[it.t] || '', name: 'STORE ' + NAME[it.t] + (STACK.has(it.t) ? ' x' + it.n : ''), price: '', btn: 'STORE', ok: () => !!inv[i] && SAFE.items.length < C.stashMax, buy: () => { SAFE.items.push(inv[i]); inv[i] = null; renderInv(); saveSafe(); return true; } }); });
+    SAFE.items.forEach((it, i) => R.push({ icon: ICON[it.t] || '', name: 'TAKE ' + NAME[it.t] + (STACK.has(it.t) ? ' x' + it.n : ''), price: '', btn: 'TAKE', ok: () => true, buy: () => { if (!addItem({ ...it })) { snd.full(); return false; } SAFE.items.splice(i, 1); saveSafe(); return true; } }));
+    return R;
+  }
+  R.push(row('SAVE GAME', 'HARD SAVE OF YOUR STATS, GEAR AND PARKED VEHICLES. IT ALSO SAVES WHEN YOU ENTER AND LEAVE.', '', () => true, () => { saveGame(); return true; }, 'SAVE'));
+  SAFE.sp.forEach((on, i) => R.push(on ? { icon: SAFE_ICON, name: 'PARKING SPOT ' + (i + 1), free: true, lab: 'OWNED', sub: SAFE.park[i] ? 'HOLDING A SAVED VEHICLE' : 'EMPTY - PARK IN IT, THEN SAVE' } : row('PARKING SPOT ' + (i + 1), 'SECURE STALL IN THE YARD. KEEPS ITS CAR AND FUEL SAFE.', C.spotPrice, () => cash >= C.spotPrice, () => { cash -= C.spotPrice; SAFE.sp[i] = true; saveSafe(); return true; })));
+  if (!SAFE.heal) R.push(row('HEALING STATION', 'FREE FULL HEALS, ANY TIME YOU VISIT.', C.healPrice, () => cash >= C.healPrice, () => { cash -= C.healPrice; SAFE.heal = 1; saveSafe(); return true; }));
+  else { R.push(row('USE HEALING STATION', 'FREE FULL HEAL', '', () => hp < maxHP(), () => { hp = maxHP(); return true; }, 'HEAL'));
+    if (SAFE.heal < 2) R.push(row('ZOMBIE CURE UPGRADE', 'THE STATION CAN NOW CURE INFECTION.', C.curePrice, () => cash >= C.curePrice, () => { cash -= C.curePrice; SAFE.heal = 2; saveSafe(); return true; }));
+    else R.push(row('CURE INFECTION', 'FREE', '', () => p.inf > 0, () => { p.inf = 0; return true; }, 'CURE')); }
+  if (!SAFE.barber) R.push(row('BARBER STATION', 'CHANGE YOUR LOOK AND NAME FOR FREE.', C.barberPrice, () => cash >= C.barberPrice, () => { cash -= C.barberPrice; SAFE.barber = true; saveSafe(); return true; }));
+  else R.push(row('USE BARBER STATION', 'FREE LOOK + NAME CHANGE', '', () => true, () => { closeShop(); openBarber(true); return false; }, 'OPEN'));
+  if (!SAFE.pumpOn) R.push(row('FUEL PUMP', 'ADDS A PUMP + A 6-TANK DROP-OFF GRID. HAUL FUEL TANKS HERE WITH A PICKUP OR TRAILER.', C.pumpPrice, () => cash >= C.pumpPrice, () => { cash -= C.pumpPrice; SAFE.pumpOn = true; installPump(); saveSafe(); toast('FUEL PUMP INSTALLED'); return true; }));
+  else R.push({ icon: SAFE_ICON, name: 'FUEL PUMP', free: true, lab: 'INSTALLED', sub: 'STOCK ' + Math.round(safeStock()) + ' UNITS IN ' + SAFE.fs.filter(f => f !== null).length + '/6 TANKS<br>[T] UNLOAD A TANK AT THE GRID, [Y] TAKE ONE, HOLD [G] AT THE PUMP' });
+  return R;
 }
+function saveGame() {                                                // hard save: player state + whatever is parked in your bought stalls
+  SAFE.ps.forEach((q, i) => { if (!SAFE.sp[i]) { SAFE.park[i] = null; return; } const c = cars.find(c => !c.dead && c !== p.car && !c.drv && c.tk !== 'semi' && Math.abs(c.x - q.x) < 16 && Math.abs(c.y - q.y) < 22 && Math.abs(c.sp) < 30); SAFE.park[i] = c ? { tk: c.tk, color: c.color, fuel: c.fuel, hp: c.hp, tanks: c.tanks.slice() } : null; });
+  saveSafe(); try { localStorage.setItem('gta1save', JSON.stringify({ seed: SEED, name, score, cash, bank, hp, inf: p.inf, inv, look })); } catch (e) {} toast('GAME SAVED'); refreshCont();
+}
+function spawnParked() {                                             // saved vehicles return to their stalls on every new world
+  if (!SAFE.w) return; cars = cars.filter(c => !(c.x > SAFE.x - 20 && c.x < SAFE.x + SAFE.w + 20 && c.y > SAFE.y + 100 && c.y < SAFE.y + SAFE.h + 20));
+  SAFE.park.forEach((d, i) => { if (!d || !CTYPES[d.tk]) return; const q = SAFE.ps[i], c = mkCar(q.x, q.y, -Math.PI / 2, d.tk, d.fuel); c.color = d.color; c.hp = d.hp; c.tanks = (d.tanks || []).slice(); cars.push(c); });
+}
+function continueGame() {
+  let sv; try { sv = JSON.parse(localStorage.getItem('gta1save')); } catch (e) {} if (!sv) return;
+  $('nm').value = sv.name; $('sd').value = sv.seed; startGame(); score = sv.score; cash = sv.cash; bank = sv.bank; hp = Math.min(maxHP(), sv.hp); p.inf = sv.inf || 0;
+  for (const k of ['shirt', 'hair', 'skin']) { Object.assign(look[k], sv.look[k]); PK[k].sl.value = look[k].l; PK[k].draw(); } updLook();
+  inv.fill(null); (sv.inv || []).forEach((it, i) => { inv[i] = it; }); renderInv(); if (SAFE.door) { p.x = SAFE.door.x; p.y = SAFE.door.y + 20; cam.x = p.x; cam.y = p.y; }
+}
+const refreshCont = () => { let h = false; try { h = !!localStorage.getItem('gta1save'); } catch (e) {} $('cont').style.display = h && modalMode === 'start' ? 'inline-block' : 'none'; };
 function gridPool(want) {                                            // vehicles/trailers near the grid: those carrying tanks (want 'have') or with room (want 'room')
   const out = [], g = SAFE.gc, R = CFG.safehouse.reach;
   const t = v => { if (v.dead || Math.hypot(v.x - g.x, v.y - g.y) > R) return; const cap = tankSlots(v).length; if (!cap) return; if (want === 'have' ? v.tanks.length : (v.tanks.length < cap && !(v.isTrailer && (v.load || v.boxT)))) out.push(v); };
@@ -1963,6 +1998,7 @@ function drawSafe(cx, cy, hw, hh) {
   ctx.strokeStyle = 'rgba(232,192,64,.8)'; ctx.lineWidth = 1.2; ctx.setLineDash([6, 5]); ctx.strokeRect(x + .5, y + 54.5, w - 1, h - 55); ctx.setLineDash([]);
   ctx.textAlign = 'center'; ctx.font = 'bold 8px "Courier New",monospace';
   if (!SAFE.owned && SAFE.door) { ctx.fillStyle = '#e8c040'; ctx.fillRect(SAFE.door.x - 22, SAFE.door.y - 22, 44, 11); ctx.fillStyle = '#222'; ctx.fillText('FOR SALE', SAFE.door.x, SAFE.door.y - 14); return; }
+  SAFE.ps.forEach((q, i) => { const on = SAFE.sp[i]; ctx.strokeStyle = on ? 'rgba(232,192,64,.9)' : 'rgba(150,150,150,.45)'; ctx.lineWidth = 1.2; ctx.setLineDash(on ? [] : [3, 3]); ctx.strokeRect(q.x - 12.5, q.y - 22, 25, 44); ctx.setLineDash([]); ctx.fillStyle = on ? '#e8c040' : '#999'; ctx.fillText(on ? 'P' + (i + 1) : '$3K', q.x, q.y + 3); });
   if (!SAFE.pumpOn) return;
   SAFE.cp.forEach((q, i) => { ctx.strokeStyle = 'rgba(232,192,64,.9)'; ctx.lineWidth = 1.2; ctx.strokeRect(q.x - 12, q.y - 12, 24, 24); const f = SAFE.fs[i]; if (f === null) return;
     ctx.fillStyle = '#6a140c'; ctx.beginPath(); ctx.arc(q.x, q.y, 9, 0, 7); ctx.fill(); ctx.fillStyle = f > .01 ? '#d8321f' : '#6a4a44'; ctx.beginPath(); ctx.arc(q.x, q.y, 7.8, 0, 7); ctx.fill();
@@ -2485,6 +2521,7 @@ function loop(now) {
 }
 requestAnimationFrame(loop);
 addEventListener('pagehide', saveHi);
+refreshCont();
 </script>
 </body>
 </html>
