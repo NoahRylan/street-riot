@@ -10,7 +10,8 @@
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#000; --hud:#f2e23a; --sh:#000; } }
   :root[data-theme="dark"] { --bg:#000; --hud:#f2e23a; --sh:#000; }
   html, body { height:100%; margin:0; background:var(--bg); overflow:hidden; user-select:none; }
-  canvas#c { display:block; width:100%; height:100%; image-rendering:pixelated; image-rendering:crisp-edges; cursor:crosshair; }
+  canvas#c { display:block; position:relative; width:100%; height:100%; image-rendering:pixelated; image-rendering:crisp-edges; cursor:crosshair; }
+  #cG { display:none; position:fixed; left:0; top:0; width:100%; height:100%; image-rendering:pixelated; image-rendering:crisp-edges; pointer-events:none; }   /* ver18.1: the WebGL picture under #c */
   .t { color:var(--hud); font:bold 14px/1.5 "Courier New",monospace; letter-spacing:1px; text-shadow:2px 2px 0 var(--sh); pointer-events:none; position:fixed; }
   #hud { left:12px; top:calc(10px + env(safe-area-inset-top,0px)); max-width:62vw; }
   #hi { right:12px; top:calc(6px + env(safe-area-inset-top,0px)); font-size:13px; color:#ff9a1f; }
@@ -774,6 +775,7 @@ body #tip kbd{display:inline-block;min-width:11px;padding:0 5px;margin:0 2px;bor
     <label class="sr" data-d="SMOKE, SPARKS, BLOOD AND DEBRIS. LOWER IT IF THE GAME STUTTERS IN BIG FIGHTS."><span>PARTICLES</span><select id="sPar" class="in"><option value="0.4">LOW</option><option value="0.7">MEDIUM</option><option value="1" selected>HIGH</option></select></label>
     <label class="sr" data-d="THE SCREEN SHAKES ON EXPLOSIONS, CRASHES AND HEAVY GUNS."><span>SCREEN SHAKE</span><input type="checkbox" id="sShake" checked></label>
     <label class="sr" data-d="SKID AND TIRE MARKS STAY ON THE ROAD FOR A WHILE."><span>TIRE MARKS</span><input type="checkbox" id="sTrk" checked></label>
+    <label class="sr" data-d="CARS AND PEOPLE ARE DRAWN BY THE GRAPHICS CARD (WEBGL): FASTER IN BIG CROWDS. TURN IT OFF IF THE PICTURE LOOKS WRONG. SAVED IN THIS BROWSER."><span>WEBGL</span><input type="checkbox" id="sGL" checked></label>
   </div>
   <div class="sp" data-p="hud">
     <label class="sr" data-d="THE SIZE OF EVERYTHING ON THE HUD: PAGER, SCORE, GUN CARD, HOTBAR AND MINIMAP."><span>GUI SCALE</span><input type="range" id="sGui" min="60" max="150" value="100"><b></b></label>
@@ -1126,6 +1128,13 @@ function honkSet(on, c) {                                              // your h
   if (on && !honk) honk = hornStart(H, tk, id);
   else if (on && honk.loop && AC.currentTime > honk.end - .05) { const r = melPlay(H, honk.g, honk.end); honk.o = honk.o.slice(-40).concat(r.o); honk.end = r.end; }   // loop horns keep playing while H is held
 }
+const hornOn = c => { const h = hostP(); return (c === h.car && !h.seat && time - (h.honkT || -9) < .15) || !!(c.pdrv && !c.pdrv.p.seat && time - (c.pdrv.p.honkT || -9) < .15); };
+function hornsTick() {                                                  // ver17.9: other players' horns, each in its own car's horn sound, quieter with distance
+  if (!AC || !NET.role) return; const L = NET.hornL || (NET.hornL = new Set());
+  for (const c of cars) { if (c === p.car) continue; const on = NET.role === 'client' ? !!c.hornOn : hornOn(c), d = Math.hypot(c.x - p.x, c.y - p.y), v = clamp(1 - d / 520, 0, 1); let h = c.hornV;
+    if (on && v > 0 && !h) { const hz = c.mods && (HORNS[c.mods.horn] || custH(c.mods.horn)) ? c.mods.horn : '', H = HORNS[hz] || custH(hz); h = c.hornV = hornStart(H, c.tk, hz); h.H = H; const a = AC.createGain(); h.g.disconnect(); h.g.connect(a); a.connect(master); h.a = a; L.add(c); }
+    if (h) { h.a.gain.value = v; if (!on || v <= 0) { if (!h.once) hornStop(h); c.hornV = null; L.delete(c); } else if (h.loop && AC.currentTime > h.end - .05) { const r = melPlay(h.H, h.g, h.end); h.o = h.o.slice(-40).concat(r.o); h.end = r.end; } } }
+  for (const c of L) if (!cars.includes(c) || c === p.car) { if (c.hornV && !c.hornV.once) hornStop(c.hornV); c.hornV = null; L.delete(c); } }
 let hornPv = null;
 function hornTry(k, tk) { if (!AC) return; if (hornPv) hornStop(hornPv); const h = hornPv = hornStart(HORNS[k] || custH(k), tk, ''); if (!h.once && !h.loop) setTimeout(() => { if (hornPv === h) { hornStop(h); hornPv = null; } }, 600); }   // shop preview: held horns sound for 0.6 s
 function npcHorn(c, kind, re = false, dur = 1.4) {                     // NPC drivers' horns: 'tap' (passing / thanks), 'tap2' (get moving!), 'long' (honking back, cut off), 'lay' (leaning on it for dur s); re = an answer (other drivers don't answer answers); each car a slightly different pitch, quieter with distance, panned
@@ -1392,7 +1401,7 @@ function genWorld(seed) {
   fogC = document.createElement('canvas'); fogC.width = Math.ceil(MX / FOGC); fogC.height = Math.ceil(MY / FOGC); fogX = fogC.getContext('2d');
   renderMap(); worldReady = true;
 }
-function renderMap() {
+function renderMap() { GCH.clear();
   const k = .1, w = Math.ceil(MX * k), h = Math.ceil(MY * k); mapT = document.createElement('canvas'); mapT.width = w; mapT.height = h; mapB = document.createElement('canvas'); mapB.width = w; mapB.height = h; fogTer = document.createElement('canvas'); fogTer.width = w; fogTer.height = h;
   const g = mapT.getContext('2d'); g.fillStyle = '#3d8b2f'; g.fillRect(0, 0, MX * k, MY * k);
   g.fillStyle = '#5a5a60'; for (const b of RX) g.fillRect(b.a * k, 0, b.w * k, MY * k); for (const b of RY) g.fillRect(0, b.a * k, MX * k, b.w * k);
@@ -1671,13 +1680,15 @@ function drawRevLines() {                                              // revers
   for (const m of [24, 48, 72]) { const q = P.find(e => e.s >= m) || P[P.length - 1]; ctx.strokeStyle = 'rgba(' + col(m - 1) + ',.85)'; ctx.beginPath(); for (const sd of [-1, 1]) { ctx.moveTo(...E(q, sd, hw)); ctx.lineTo(...E(q, sd, hw - 4)); } ctx.stroke(); }
   ctx.restore();
 }
-const aimA = (ox, oy) => p.cx !== undefined && Math.hypot(p.cx - p.x, p.cy - p.y) > 24 ? Math.atan2(p.cx - ox, -(p.cy - oy)) : p.a;   // ver14.6: shots leave the muzzle (on the right hand) toward the cursor's centre, so they land on the "+" at any range (cursor right on top of you: straight ahead)
+const faceAt = (x0, y0, tx, ty) => { const d = Math.hypot(tx - x0, ty - y0), ph = Math.atan2(tx - x0, -(ty - y0)); return d > 4.2 ? ph - Math.asin(3.2 / d) : ph; };   // ver17.9: you turn so the barrel (on your right hand) points through the cursor
+const aimA = () => p.a;   // shots go straight down the barrel, so they land on the cursor and never leave at an angle when it's close to the muzzle (user, 2026-11-03)
 function drawLaser() {                                                  // 3.4: scoped with the sniper, a faint dashed line traces where the bullet will go (with its drop), stopping at the first wall, car or person
   const it = inv[sel]; if (state !== 'play' || !scoped || p.car || !it || it.t !== 'sniper') return; const w = WEAP.sniper, L = 6 + TIP.sniper;
   let x = p.x + Math.sin(p.a) * L + Math.cos(p.a) * 3.2, y = p.y - Math.cos(p.a) * L + Math.sin(p.a) * 3.2, z = 8, vz = w.vz; const h = 4 / w.spd, aa = aimA(x, y), fx = Math.sin(aa), fy = -Math.cos(aa);
   ctx.beginPath(); ctx.moveTo(x, y);                                     // ver16.4: on the real path, like the rounds themselves
+  const x0 = x, y0 = y, onLine = (o, m) => { const dx = o.x - x0, dy = o.y - y0, al = dx * fx + dy * fy; return al > -m && Math.abs(dx * fy - dy * fx) < m; }, CL = cars.filter(c => onLine(c, 40)), NL = NPCS.filter(n => n.hp > 0 && onLine(n, 14));   // ver17.9: only what's near the line gets tested (it was every car and person at every step: 140 ms a frame)
   for (let i = 0; i < 1500; i++) { x += fx * w.spd * h; y += fy * w.spd * h; z += vz * h; vz -= w.g * h; if (i % 3 === 0) ctx.lineTo(x, y);
-    if (z <= 0 || x < 0 || y < 0 || x > MX || y > MY || inSolid(x, y, p.roof) || (i > 2 && (carAt(x, y, 0) || npcAt(x, y, 0)))) break; }
+    if (z <= 0 || x < 0 || y < 0 || x > MX || y > MY || inSolid(x, y, p.roof) || (i > 2 && ((CL.some(c => Math.abs(c.x - x) < 34 && Math.abs(c.y - y) < 34) && carAt(x, y, 0)) || (NL.some(n => Math.abs(n.x - x) < 10 && Math.abs(n.y - y) < 10) && npcAt(x, y, 0))))) break; }
   ctx.lineTo(x, y); ctx.save(); ctx.setLineDash([6 / cam.zoom, 4 / cam.zoom]); ctx.strokeStyle = 'rgba(170,170,170,.5)'; ctx.lineWidth = 1.2 / cam.zoom; ctx.stroke(); ctx.restore();
 }
 function melee() {
@@ -1720,7 +1731,7 @@ function updateFoot(dt) {
   if (st !== p.step) { p.step = st; if (sp > 10) { snd.step(run); if (!p.roof) { p.side ^= 1; const ma = Math.atan2(p.vx, -p.vy), o = p.side ? 2 : -2;
     prints[pIdx] = { x: p.x + Math.cos(ma) * o, y: p.y + Math.sin(ma) * o, a: ma, t: time }; pIdx = (pIdx + 1) % prints.length; } } }
   p.cx = p.in.ax; p.cy = p.in.ay;                                      // 13.9: the aim point comes from the player's input
-  p.a = Math.atan2(p.cx - p.x, -(p.cy - p.y));
+  p.a = faceAt(p.x, p.y, p.cx, p.cy);
   p.cd -= dt; p.flash -= dt; p.mf = (p.mf || 0) - dt; p.mt -= dt; p.hitCd -= dt; p.in.click -= dt;
   if (p.qT > 0) p.qT += dt;
   const it = inv[sel], gren = it && it.t === 'grenade', auto = it && WEAP[it.t] && fireMode(it) === 'auto';
@@ -2677,7 +2688,105 @@ function modPaint(c, stage) {                                            // stag
   if (m.emb && EMBLEMS[m.emb]) { const B = EMBLEMS[m.emb], s = .8, [ex, ey] = G.emb, x0 = ex - 3.5 * s, y0 = ey - 3.5 * s;   // crew emblem stamped on the hood (on the semi's roof)
     for (const [col, o] of [['rgba(0,0,0,.45)', .4], [dk ? '#161616' : '#f4f4f4', 0]]) { ctx.fillStyle = col; B.forEach((row, j) => { for (let i = 0; i < 7; i++) if (row[i] === '1') ctx.fillRect(x0 + i * s + o, y0 + j * s + o, s, s); }); } }
 }
+// --- ver18.0 sprites: a car / person look is drawn once into a small picture and stamped every frame (the step before a WebGL renderer, which can only draw pictures). A look that changes with time (light bars, shimmering paint) is caught by drawing it twice a moment apart, and keeps being drawn live ---
+const SPRC = new Map(), SPRL = new Set(), SPRS = 2; let SPROFF = false, SPRN = false;   // SPRN: people as sprites - slower than drawing their few shapes on a 2D canvas; for the WebGL renderer
+function sprBake(w, h, fn) { const c = document.createElement('canvas'); c.width = Math.ceil(w * SPRS); c.height = Math.ceil(h * SPRS); const g = c.getContext('2d'), keep = ctx; ctx = g; try { g.setTransform(SPRS, 0, 0, SPRS, c.width / 2, c.height / 2); fn(); } finally { ctx = keep; } return c; }
+function sprPut(key, c) { SPRC.set(key, c); if (SPRC.size > 500) SPRC.delete(SPRC.keys().next().value); }
+function sprGet(key) { const c = SPRC.get(key); if (c) { SPRC.delete(key); SPRC.set(key, c); } return c; }
+function sprBlit(c, w, h) { const sm = ctx.imageSmoothingEnabled; ctx.imageSmoothingEnabled = true; ctx.drawImage(c, -w / 2, -h / 2, w, h); ctx.imageSmoothingEnabled = sm; }
+function sprSame(a, b) { const A = a.getContext('2d').getImageData(0, 0, a.width, a.height).data, B = b.getContext('2d').getImageData(0, 0, b.width, b.height).data; for (let i = 0; i < A.length; i++) if (A[i] !== B[i]) return false; return true; }
+// --- ver18.1 WebGL renderer (Task_Plan 18.4): WebGL is the compositor. Each frame #cG (under #c) draws, in order: #cB (2D, off screen: the ground up to the trailers, cars still drawn live, corpses), then the car / people sprites from an atlas (one instanced draw per run of the same atlas page), then #cM (2D, off screen: people drawn live, bars, the player, bullets ... the night mask), then #cW (the night's warm 'lighter' glows, added). #c on top gets the rest (eye cores, tops, particles, text, UI) and is see-through elsewhere. 2D canvases are only ever uploaded to the GPU, never read back. GLON = the setting; any WebGL trouble falls back to the 2D path for the session ---
+let GLON = true, GLF = 0; try { GLON = localStorage.getItem('streetRiotGL') !== '0'; } catch (e) {}
+const GLS = 2048, GLMAX = 16384, GLR = { ok: false, dead: false, gl: null, m: ctx, cG: null, cB: null, b: null, cM: null, mc: null, cW: null, wc: null, lt: [], st: 0, late: [], mk: [], pg: [], cur: 0, at: new WeakMap(), q: new Float32Array(GLMAX * 16), pi: new Uint8Array(GLMAX), n: 0, cam: [0, 0, 1], clr: false };
+function glOff(why) { GLR.ok = false; GLR.dead = true; GLF = 0; GLR.st = 0; if (GLR.cG) GLR.cG.style.display = 'none'; console.warn('WebGL off, back to 2D:', why); }
+function glInit() {
+  if (GLR.gl || GLR.dead) return GLR.ok;
+  try {
+    const cG = document.createElement('canvas'); cG.id = 'cG'; cv.before(cG); GLR.cG = cG; for (const k of ['B', 'M', 'W']) GLR['c' + k] = document.createElement('canvas'); GLR.b = GLR.cB.getContext('2d'); GLR.mc = GLR.cM.getContext('2d'); GLR.wc = GLR.cW.getContext('2d');
+    const o = { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false }; let gl = cG.getContext('webgl2', o);
+    if (gl) { GLR.div = (i, d) => gl.vertexAttribDivisor(i, d); GLR.dai = (m, f, c, n) => gl.drawArraysInstanced(m, f, c, n); }
+    else { gl = cG.getContext('webgl', o); const x = gl && gl.getExtension('ANGLE_instanced_arrays'); if (!x) throw new Error('no instancing'); GLR.div = (i, d) => x.vertexAttribDivisorANGLE(i, d); GLR.dai = (m, f, c, n) => x.drawArraysInstancedANGLE(m, f, c, n); }
+    GLR.gl = gl; cG.addEventListener('webglcontextlost', e => { e.preventDefault(); glOff('context lost'); });
+    const sh = (t, src) => { const h = gl.createShader(t); gl.shaderSource(h, src); gl.compileShader(h); if (!gl.getShaderParameter(h, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(h)); return h; };
+    const pr = gl.createProgram(); gl.attachShader(pr, sh(gl.VERTEX_SHADER, 'precision highp float; attribute vec2 q; attribute vec4 a0, a1, a2, a3; uniform vec4 cam; uniform vec2 vw; varying vec2 uv; varying vec4 col; void main() { vec2 l = q * a0.zw + a3.yz; float s = sin(a3.x), c = cos(a3.x); vec2 w = a0.xy + vec2(l.x * c - l.y * s, l.x * s + l.y * c), p = (w - cam.xy) * cam.z + vw * .5; gl_Position = vec4(p.x / vw.x * 2. - 1., 1. - p.y / vw.y * 2., 0., 1.); uv = mix(a1.xy, a1.zw, q + .5); col = a2; }'));
+    gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, 'precision highp float; uniform sampler2D t; varying vec2 uv; varying vec4 col; void main() { gl_FragColor = texture2D(t, uv) * col; }'));
+    gl.linkProgram(pr); if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(pr)); gl.useProgram(pr); GLR.pr = pr; GLR.uC = gl.getUniformLocation(pr, 'cam'); GLR.uV = gl.getUniformLocation(pr, 'vw');
+    const qb = gl.createBuffer(), qa = gl.getAttribLocation(pr, 'q'); gl.bindBuffer(gl.ARRAY_BUFFER, qb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-.5, -.5, .5, -.5, -.5, .5, .5, .5]), gl.STATIC_DRAW); gl.enableVertexAttribArray(qa); gl.vertexAttribPointer(qa, 2, gl.FLOAT, false, 0, 0); GLR.div(qa, 0);
+    GLR.ib = gl.createBuffer(); GLR.aI = ['a0', 'a1', 'a2', 'a3'].map(k => gl.getAttribLocation(pr, k)); gl.bindBuffer(gl.ARRAY_BUFFER, GLR.ib); for (const a of GLR.aI) { gl.enableVertexAttribArray(a); GLR.div(a, 1); }
+    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true); gl.activeTexture(gl.TEXTURE0); gl.uniform1i(gl.getUniformLocation(pr, 't'), 0);
+    const tex = f => { const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t); for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, f], [gl.TEXTURE_MAG_FILTER, f], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v); return t; };
+    for (let i = 0; i < 2; i++) { GLR.pg.push({ tex: tex(gl.LINEAR), g: 0 }); glPage(GLR.pg[i]); } for (let i = 0; i < 3; i++) GLR.lt.push(tex(gl.NEAREST));   // two atlas pages; three whole-screen layers (#cB, #cM, #cW), pixel for pixel
+    GLR.ok = true;
+  } catch (e) { glOff(e); }
+  return GLR.ok;
+}
+function glPage(P) {                                                    // empty an atlas page (zeroed, so no old pixels bleed into new neighbours); a 4x4 white block at the corner for solid colours
+  const gl = GLR.gl; gl.bindTexture(gl.TEXTURE_2D, P.tex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, GLS, GLS, 0, gl.RGBA, gl.UNSIGNED_BYTE, null); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 4, 4, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(64).fill(255)); P.g++; P.x = 6; P.y = 0; P.sh = 6;
+}
+function glAt(c) {                                                      // where a sprite canvas sits in the atlas; uploaded on first use; a full page is emptied and refilled (the other page keeps its sprites)
+  let e = GLR.at.get(c); if (e && GLR.pg[e.p].g === e.g) return e; const w = c.width + 2, h = c.height + 2; if (w > GLS || h > GLS) return null;
+  let P = GLR.pg[GLR.cur]; if (P.x + w > GLS) { P.y += P.sh; P.x = 0; P.sh = 0; }
+  if (P.y + h > GLS) { glUp(0, GLR.cB); glFlush(); GLR.cur = (GLR.cur + 1) % GLR.pg.length; P = GLR.pg[GLR.cur]; glPage(P); if (P.x + w > GLS) { P.y += P.sh; P.x = 0; P.sh = 0; } }   // the queue still points at the old page: draw it first (the ground as far as it got this frame)
+  const gl = GLR.gl, x = P.x + 1, y = P.y + 1; gl.bindTexture(gl.TEXTURE_2D, P.tex); gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, c); P.x += w; P.sh = Math.max(P.sh, h);
+  e = { p: GLR.cur, g: P.g, u0: x / GLS, v0: y / GLS, u1: (x + c.width) / GLS, v1: (y + c.height) / GLS }; GLR.at.set(c, e); return e;
+}
+function glQ(c, x, y, a, w, h, ox, oy, r, g, b, al) {                  // one picture (c = a sprite canvas, null = a solid colour) at world x, y turned by a, centre offset ox, oy in its own facing
+  let e = null, pg; if (c) { e = glAt(c); if (!e) return false; pg = e.p; } else pg = GLR.n && GLR.pi[GLR.n - 1] < 2 ? GLR.pi[GLR.n - 1] : GLR.cur;
+  if (GLR.n >= GLMAX) glFlush(); const i = GLR.n++, o = i * 16, Q = GLR.q, W0 = 2 / GLS; GLR.pi[i] = pg;
+  Q[o] = x; Q[o + 1] = y; Q[o + 2] = w; Q[o + 3] = h; if (e) { Q[o + 4] = e.u0; Q[o + 5] = e.v0; Q[o + 6] = e.u1; Q[o + 7] = e.v1; } else Q[o + 4] = Q[o + 5] = Q[o + 6] = Q[o + 7] = W0;
+  Q[o + 8] = r * al; Q[o + 9] = g * al; Q[o + 10] = b * al; Q[o + 11] = al; Q[o + 12] = a; Q[o + 13] = ox; Q[o + 14] = oy; return true;
+}
+function glFull(i) {                                                    // queue whole-screen layer i (pixel for pixel over the view)
+  if (GLR.n >= GLMAX) glFlush(); const k = GLR.n++, o = k * 16, Q = GLR.q, z = GLR.cam[2]; GLR.pi[k] = 252 + i;
+  Q[o] = GLR.cam[0]; Q[o + 1] = GLR.cam[1]; Q[o + 2] = W / z; Q[o + 3] = H / z; Q[o + 4] = 0; Q[o + 5] = 0; Q[o + 6] = 1; Q[o + 7] = 1; Q[o + 8] = Q[o + 9] = Q[o + 10] = Q[o + 11] = 1; Q[o + 12] = Q[o + 13] = Q[o + 14] = 0;
+}
+function glUp(i, c) { if (!GLR.ok) return; const gl = GLR.gl; try { gl.bindTexture(gl.TEXTURE_2D, GLR.lt[i]); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c); } catch (e) { glOff(e); } }
+function glFlush(add) {
+  const gl = GLR.gl; if (!GLR.ok) { GLR.n = 0; return; }
+  try {
+    if (GLR.clr) { gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); GLR.clr = false; }
+    const n = GLR.n; if (!n) return; gl.useProgram(GLR.pr); gl.uniform4f(GLR.uC, GLR.cam[0], GLR.cam[1], GLR.cam[2], 0); gl.uniform2f(GLR.uV, W, H); if (add) gl.blendFunc(gl.ONE, gl.ONE);   // add = the 2D 'lighter' mode
+    gl.bindBuffer(gl.ARRAY_BUFFER, GLR.ib); gl.bufferData(gl.ARRAY_BUFFER, GLR.q.subarray(0, n * 16), gl.STREAM_DRAW);
+    for (let s0 = 0; s0 < n;) { const pg = GLR.pi[s0]; let e = s0 + 1; while (e < n && GLR.pi[e] === pg) e++; gl.bindTexture(gl.TEXTURE_2D, pg >= 252 ? GLR.lt[pg - 252] : GLR.pg[pg].tex); for (let i = 0; i < 4; i++) gl.vertexAttribPointer(GLR.aI[i], 4, gl.FLOAT, false, 64, s0 * 64 + i * 16); GLR.dai(gl.TRIANGLE_STRIP, 0, 4, e - s0); s0 = e; }
+    if (add) gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+  } catch (e) { glOff(e); } finally { GLR.n = 0; }
+}
+const thermOn = () => { const it = inv[sel]; return state === 'play' && !p.car && scoped && it && WEAP[it.t] && gunW(it).thermal; };
+function glLayer() {                                                    // true when this frame's cars and people go through WebGL (called at the top of draw); the thermal scope draws in 2D (its glow needs the picture under it)
+  if (!GLON || GLR.dead || SPROFF || !W || !H || thermOn() || (!GLR.ok && !glInit())) { if (GLR.cG && GLR.cG.style.display !== 'none') GLR.cG.style.display = 'none'; GLR.st = 0; return false; }
+  const { cG } = GLR; if (cG.width !== W || cG.height !== H) { for (const c of [cG, GLR.cB, GLR.cM, GLR.cW]) { c.width = W; c.height = H; } for (const g of [GLR.b, GLR.mc, GLR.wc]) g.imageSmoothingEnabled = false; }
+  if (cG.style.display !== 'block') cG.style.display = 'block'; const f = cv.style.filter; if (cG.style.filter !== f) cG.style.filter = f; return true;
+}
+function glLegs(n, sp) {                                               // a person's shadow and legs on the WebGL layer (the body sprite goes on top of them)
+  const X = Math.round(n.x), Y = Math.round(n.y), k = 34 / 255; if (!GLR.sh) GLR.sh = sprBake(14, 10, () => { ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(0, 0, 5.5, 4, 0, 0, 7); ctx.fill(); }); glQ(GLR.sh, X + 1.5, Y + 1.5, 0, 14, 10, 0, 0, 1, 1, 1, 1);
+  const s = sp > 1 ? Math.sin(n.phase) * 3.2 : 0, a = sp > 1 ? Math.atan2(n.vx, -n.vy) : 0; glQ(null, X, Y, a, 2, 3, -2, .5 + s, k, k, k, 1); glQ(null, X, Y, a, 2, 3, 2, .5 - s, k, k, k, 1);
+}
+function glTo(g) { g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, W, H); g.setTransform(WMAT); ctx = g; }   // start drawing on an empty layer, in world space
+function glBegin(cx, cy, z) { GLR.n = 0; GLR.cam[0] = cx; GLR.cam[1] = cy; GLR.cam[2] = z; GLR.clr = true; GLR.late.length = GLR.mk.length = 0; glFull(0); GLR.st = 0; }   // slot 0 = the ground layer, filled in at glDone
+function glDone() {                                                     // after the people: ground layer + sprites to the GPU, then the people drawn live and the bars / marks over heads on #cM
+  GLF = 0; glUp(0, GLR.cB); glFlush(); glTo(GLR.mc); GLR.st = 1;
+  for (const n of GLR.late) drawNpc0(n); for (const n of GLR.mk) npcMarks(n, n.kind === 'zombie'); GLR.late.length = GLR.mk.length = 0;
+}
+function glMid(last) { if (GLR.st !== 1) return; glUp(1, GLR.cM); glFull(1); glFlush(); if (last) { glTo(GLR.m); GLR.st = 3; } else { glTo(GLR.wc); GLR.st = 2; } }   // #cM (with the night mask) onto the GPU picture; then the warm glows on #cW, or straight on to #c
+function glWarm() { if (GLR.st === 1) glMid(); if (GLR.st !== 2) return; glUp(2, GLR.cW); glFull(2); glFlush(true); glTo(GLR.m); GLR.st = 3; }
+function glEnd() { if (GLR.st === 1) glMid(true); else if (GLR.st === 2) glWarm(); }   // after drawNight: whatever stage is left, then #c for the rest
+function glCar(c, sp, w, h) {                                           // a car sprite + its blood on the WebGL layer
+  const k = hydK(c), X = Math.round(c.x), Y = Math.round(c.y); if (!glQ(sp, X, Y, c.a, w * k, h * k, 0, 0, 1, 1, 1, 1)) return false;
+  if (c.bl) for (const b of c.bl) { const age = time - b.t; if (age > 60) continue; glQ(null, X, Y, c.a, b.r * 2 * k, b.r * 2 * k, b.x * k, b.y * k, 150 / 255, 8 / 255, 12 / 255, .8 * (1 - age / 60)); }
+  return true;
+}
 function drawCar(c) {
+  if (SPROFF || c.tk === 'tank' || c.tk === 'garbage' || c.tk === 'dozer' || (c.hydT && time - c.hydT < 1.6)) { drawCar0(c); return; }
+  const sab = Math.round((c.sa || 0) * 8) / 8, key = c.tk + '|' + c.color + '|' + (c.mods ? JSON.stringify(c.mods) : '') + '|' + (c.dead ? 1 : 0) + (c.flat ? c.flat.map(v => v ? 1 : 0).join('') : '') + '|' + Math.round((c.dirt || 0) * 8) + '|' + sab + '|' + (c.light ? 1 : 0) + (c.hl ?? 1) + (c.drv || c.pdrv || c === p.car ? 1 : 0) + (c.towing ? 1 : 0) + (c.tanks ? c.tanks.length : 0) + (c.sp > 2 ? 1 : 0) + '|' + (c.svc || '') + (c.law || '');
+  if (SPRL.has(key)) { drawCar0(c); return; }
+  const w = 48, h = carHL(c) * 2 + 34; let sp = sprGet(key);
+  if (!sp) { const o = { x: c.x, y: c.y, a: c.a, sa: c.sa, bl: c.bl, hydT: c.hydT, beat: c.beat }, T0 = time; Object.assign(c, { x: 0, y: 0, a: 0, sa: sab, bl: null, hydT: 0, beat: false });
+    try { sp = sprBake(w, h, () => drawCar0(c)); time = T0 + .37; const s2 = sprBake(w, h, () => drawCar0(c)); if (!sprSame(sp, s2)) { SPRL.add(key); sp = null; } } finally { time = T0; Object.assign(c, o); }
+    if (!sp) { drawCar0(c); return; } sprPut(key, sp); }
+  if (GLF && glCar(c, sp, w, h)) return; ctx.save(); ctx.translate(Math.round(c.x), Math.round(c.y)); ctx.rotate(c.a); hydS(c); sprBlit(sp, w, h);
+  if (c.bl) for (const b of c.bl) { const age = time - b.t; if (age > 60) continue; ctx.fillStyle = `rgba(150,8,12,${.8 * (1 - age / 60)})`; ctx.fillRect(b.x - b.r, b.y - b.r, b.r * 2, b.r * 2); }
+  ctx.restore(); }
+function drawCar0(c) {
   if (c.tk === 'garbage') { drawGarbage(c); return; } if (c.tk === 'dozer') { drawDozer(c); return; } if (c.tk === 'tank') { drawTank(c); return; } if (isPU(c)) { drawTruck(c); if (c.svc) drawSvc(c); return; } if (c.tk === 'semi') { drawSemi(c); return; }
   ctx.save(); ctx.translate(Math.round(c.x), Math.round(c.y)); ctx.rotate(c.a); hydS(c); const so = shOff(c);
   ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(-7 + so, -14 + 2 * so, 15, 28); neonUnder(c);
@@ -2754,34 +2863,7 @@ function visOf(A, cx, cy, hw, hh, live) {                               // ver17
   const x0 = Math.floor((cx - hw - G.m) / VGC), x1 = Math.floor((cx + hw + G.m) / VGC), y0 = Math.floor((cy - hh - G.m) / VGC), y1 = Math.floor((cy + hh + G.m) / VGC), I = []; for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) { const L = G.c.get(x * 65536 + y); if (L) for (let j = 0; j < L.length; j++) I.push(L[j]); } I.sort((a, b) => a - b); const R = new Array(I.length); for (let i = 0; i < I.length; i++) R[i] = A[I[i]]; return R; }
 function drawGround(cx, cy, hw, hh) {
   const vx = (x, w) => x + w > cx - hw && x < cx + hw, vy = (y, h) => y + h > cy - hh && y < cy + hh;
-  ctx.fillStyle = '#cdbf8a'; ctx.fillRect(-8, -8, MX + 16, MY + 16); ctx.fillStyle = grassPat; ctx.fillRect(0, 0, MX, MY);
-  ctx.fillStyle = '#4d4d52';
-  for (const b of RX) if (vx(b.a, b.w)) ctx.fillRect(b.a, 0, b.w, MY);
-  for (const b of RY) if (vy(b.a, b.w)) ctx.fillRect(0, b.a, MX, b.w);
-  for (const b of RX) if (b.boul && vx(b.a, b.w)) { ctx.fillStyle = '#9a9a90'; ctx.fillRect(b.c - 10, 0, 20, MY); ctx.fillStyle = grassPat; ctx.fillRect(b.c - 9, 0, 18, MY); }
-  for (const b of RY) if (b.boul && vy(b.a, b.w)) { ctx.fillStyle = '#9a9a90'; ctx.fillRect(0, b.c - 10, MX, 20); ctx.fillStyle = grassPat; ctx.fillRect(0, b.c - 9, MX, 18); }
-  ctx.lineWidth = 1.2; ctx.setLineDash([8, 8]);
-  const y0 = Math.max(0, Math.floor((cy - hh) / 16) * 16), y1 = Math.min(MY, cy + hh), x0 = Math.max(0, Math.floor((cx - hw) / 16) * 16), x1 = Math.min(MX, cx + hw);   // lane lines end where the map ends
-  for (const b of RX) if (vx(b.a, b.w)) { ctx.strokeStyle = b.boul ? '#ddd' : '#e0c030'; ctx.beginPath(); for (const o of b.boul ? bLines(b) : [0]) { ctx.moveTo(b.c + o, y0); ctx.lineTo(b.c + o, y1); } ctx.stroke(); }
-  for (const b of RY) if (vy(b.a, b.w)) { ctx.strokeStyle = b.boul ? '#ddd' : '#e0c030'; ctx.beginPath(); for (const o of b.boul ? bLines(b) : [0]) { ctx.moveTo(x0, b.c + o); ctx.lineTo(x1, b.c + o); } ctx.stroke(); }
-  ctx.setLineDash([]);
-  for (const L of LIGHTS) if (vx(L.x0, L.x1 - L.x0) && vy(L.y0, L.y1 - L.y0)) {
-    const w = L.x1 - L.x0, h = L.y1 - L.y0; ctx.fillStyle = '#4d4d52'; ctx.fillRect(L.x0, L.y0, w, h); ctx.fillStyle = 'rgba(255,255,255,.75)';
-    for (let x = L.x0 + 3; x < L.x1 - 2; x += 5) { ctx.fillRect(x, L.y0 - 8, 2.5, 5); ctx.fillRect(x, L.y1 + 3, 2.5, 5); }
-    for (let y = L.y0 + 3; y < L.y1 - 2; y += 5) { ctx.fillRect(L.x0 - 8, y, 5, 2.5); ctx.fillRect(L.x1 + 3, y, 5, 2.5); }
-  }
-  for (const b of BL) if (vx(b.x, b.w) && vy(b.y, b.h)) {
-    ctx.fillStyle = '#a9a59a'; ctx.fillRect(b.x, b.y, b.w, b.h);
-    const I = { x: b.x + SW, y: b.y + SW, w: b.w - 2 * SW, h: b.h - 2 * SW };
-    if (b.t === 'p') { ctx.fillStyle = grassPat; ctx.fillRect(I.x, I.y, I.w, I.h); ctx.fillStyle = '#a9a59a'; ctx.fillRect(b.x + b.w / 2 - 4, I.y, 8, I.h); ctx.fillRect(I.x, b.y + b.h / 2 - 4, I.w, 8); }
-    else {
-      if (b.vg) { ctx.fillStyle = grassPat; ctx.fillRect(I.x, I.y, I.w, I.h); }
-      ctx.fillStyle = (b.t === 'l' || b.t === 'g') ? '#55555b' : '#b9b4a8'; ctx.fillRect(b.z.x, b.z.y, b.z.w, b.z.h);
-      if (b.yard) { ctx.fillStyle = '#55555b'; ctx.fillRect(b.yard.x, b.yard.y, b.yard.w, b.yard.h); ctx.fillStyle = '#9a968c'; ctx.fillRect(b.yard.x, b.yard.y - 2, b.yard.w, 2); }   // shop yard asphalt with a curb line
-      if (b.gate) { ctx.fillStyle = '#55555b'; ctx.fillRect(b.gate.x, b.gate.y, b.gate.w, b.gate.h); }
-      if (b.lines.length) { ctx.fillStyle = 'rgba(255,255,255,.55)'; for (const l of b.lines) ctx.fillRect(l[0], l[1], l[2], l[3]); }
-    }
-  }
+  if (cam.zoom < .8 && !BENCH) groundCached(cx, cy, hw, hh); else ground0(vx, vy, cx, cy, hw, hh);
   drawLamps(vx, vy, cx, cy, hw, hh);
   for (const L of LIGHTS) if (!L.sign && vx(L.x0 - 8, L.x1 - L.x0 + 16) && vy(L.y0 - 8, L.y1 - L.y0 + 16)) {
     const t = (time + L.off) % 20, s = t < 8.5 ? ['#2fe04a', '#e0361a'] : t < 10 ? ['#ffd22a', '#e0361a'] : t < 18.5 ? ['#e0361a', '#2fe04a'] : ['#e0361a', '#ffd22a'];
@@ -2811,6 +2893,42 @@ function drawGround(cx, cy, hw, hh) {
     if (sr0) safeGo(sr0);
   }
 }
+function ground0(vx, vy, cx, cy, hw, hh) {                            // ver17.9: the part of the ground that never moves (roads, lane lines, crossings, blocks)
+  ctx.fillStyle = '#cdbf8a'; ctx.fillRect(-8, -8, MX + 16, MY + 16); ctx.fillStyle = grassPat; ctx.fillRect(0, 0, MX, MY);
+  ctx.fillStyle = '#4d4d52';
+  for (const b of RX) if (vx(b.a, b.w)) ctx.fillRect(b.a, 0, b.w, MY);
+  for (const b of RY) if (vy(b.a, b.w)) ctx.fillRect(0, b.a, MX, b.w);
+  for (const b of RX) if (b.boul && vx(b.a, b.w)) { ctx.fillStyle = '#9a9a90'; ctx.fillRect(b.c - 10, 0, 20, MY); ctx.fillStyle = grassPat; ctx.fillRect(b.c - 9, 0, 18, MY); }
+  for (const b of RY) if (b.boul && vy(b.a, b.w)) { ctx.fillStyle = '#9a9a90'; ctx.fillRect(0, b.c - 10, MX, 20); ctx.fillStyle = grassPat; ctx.fillRect(0, b.c - 9, MX, 18); }
+  ctx.lineWidth = 1.2; ctx.setLineDash([8, 8]);
+  const y0 = Math.max(0, Math.floor((cy - hh) / 16) * 16), y1 = Math.min(MY, cy + hh), x0 = Math.max(0, Math.floor((cx - hw) / 16) * 16), x1 = Math.min(MX, cx + hw);   // lane lines end where the map ends
+  for (const b of RX) if (vx(b.a, b.w)) { ctx.strokeStyle = b.boul ? '#ddd' : '#e0c030'; ctx.beginPath(); for (const o of b.boul ? bLines(b) : [0]) { ctx.moveTo(b.c + o, y0); ctx.lineTo(b.c + o, y1); } ctx.stroke(); }
+  for (const b of RY) if (vy(b.a, b.w)) { ctx.strokeStyle = b.boul ? '#ddd' : '#e0c030'; ctx.beginPath(); for (const o of b.boul ? bLines(b) : [0]) { ctx.moveTo(x0, b.c + o); ctx.lineTo(x1, b.c + o); } ctx.stroke(); }
+  ctx.setLineDash([]);
+  for (const L of LIGHTS) if (vx(L.x0, L.x1 - L.x0) && vy(L.y0, L.y1 - L.y0)) {
+    const w = L.x1 - L.x0, h = L.y1 - L.y0; ctx.fillStyle = '#4d4d52'; ctx.fillRect(L.x0, L.y0, w, h); ctx.fillStyle = 'rgba(255,255,255,.75)';
+    for (let x = L.x0 + 3; x < L.x1 - 2; x += 5) { ctx.fillRect(x, L.y0 - 8, 2.5, 5); ctx.fillRect(x, L.y1 + 3, 2.5, 5); }
+    for (let y = L.y0 + 3; y < L.y1 - 2; y += 5) { ctx.fillRect(L.x0 - 8, y, 5, 2.5); ctx.fillRect(L.x1 + 3, y, 5, 2.5); }
+  }
+  for (const b of BL) if (vx(b.x, b.w) && vy(b.y, b.h)) {
+    ctx.fillStyle = '#a9a59a'; ctx.fillRect(b.x, b.y, b.w, b.h);
+    const I = { x: b.x + SW, y: b.y + SW, w: b.w - 2 * SW, h: b.h - 2 * SW };
+    if (b.t === 'p') { ctx.fillStyle = grassPat; ctx.fillRect(I.x, I.y, I.w, I.h); ctx.fillStyle = '#a9a59a'; ctx.fillRect(b.x + b.w / 2 - 4, I.y, 8, I.h); ctx.fillRect(I.x, b.y + b.h / 2 - 4, I.w, 8); }
+    else {
+      if (b.vg) { ctx.fillStyle = grassPat; ctx.fillRect(I.x, I.y, I.w, I.h); }
+      ctx.fillStyle = (b.t === 'l' || b.t === 'g') ? '#55555b' : '#b9b4a8'; ctx.fillRect(b.z.x, b.z.y, b.z.w, b.z.h);
+      if (b.yard) { ctx.fillStyle = '#55555b'; ctx.fillRect(b.yard.x, b.yard.y, b.yard.w, b.yard.h); ctx.fillStyle = '#9a968c'; ctx.fillRect(b.yard.x, b.yard.y - 2, b.yard.w, 2); }   // shop yard asphalt with a curb line
+      if (b.gate) { ctx.fillStyle = '#55555b'; ctx.fillRect(b.gate.x, b.gate.y, b.gate.w, b.gate.h); }
+      if (b.lines.length) { ctx.fillStyle = 'rgba(255,255,255,.55)'; for (const l of b.lines) ctx.fillRect(l[0], l[1], l[2], l[3]); }
+    }
+  }
+}
+const GCH = new Map(), GCS = 512, GCK = .5;
+function groundCached(cx, cy, hw, hh) {                                 // ver17.9: zoomed far out (the sniper scope) that ground is drawn once per 512 px tile at half size and reused
+  const x0 = Math.floor((cx - hw) / GCS), x1 = Math.floor((cx + hw) / GCS), y0 = Math.floor((cy - hh) / GCS), y1 = Math.floor((cy + hh) / GCS);
+  for (let i = x0; i <= x1; i++) for (let j = y0; j <= y1; j++) { const key = i * 4096 + j; let c = GCH.get(key);
+    if (!c) { c = document.createElement('canvas'); c.width = c.height = GCS * GCK; const g = c.getContext('2d'), keep = ctx, X = i * GCS, Y = j * GCS; ctx = g; try { g.scale(GCK, GCK); g.translate(-X, -Y); ground0((x, w) => x + w > X - 8 && x < X + GCS + 8, (y, h) => y + h > Y - 8 && y < Y + GCS + 8, X + GCS / 2, Y + GCS / 2, GCS / 2 + 8, GCS / 2 + 8); } finally { ctx = keep; } if (GCH.size > 80) GCH.delete(GCH.keys().next().value); }
+    else GCH.delete(key); GCH.set(key, c); ctx.drawImage(c, i * GCS, j * GCS, GCS + .5, GCS + .5); } }
 function drawCovers() {                                               // car tents / bunkers over safehouse stalls: roofs fade when you're under them
   if (!SAFE.owned || !SAFE.w) return; const me = p.car || p;
   for (let i = 0; i < SMAX; i++) { const lv = SAFE.cov[i], q = SAFE.ps[i]; if (!SAFE.sp[i] || !lv || !q) continue; const br = bRect('s' + i), w = br.w + 4, h = br.h + 4, x = q.x - w / 2, y = q.y - h / 2, under = Math.abs(me.x - q.x) < w / 2 + 2 && Math.abs(me.y - q.y) < h / 2 + 2;
@@ -2836,15 +2954,16 @@ function drawCanopies(cx, cy, hw, hh) { const TV = visOf(TREES, cx, cy, hw + 60,
   ctx.globalAlpha = 1;
 }
 function draw() {
+  ctx = GLR.m; GLF = 0; const GLL = glLayer(); if (GLL) { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, W, H); ctx = GLR.b; }   // ver18.1: GLL = WebGL draws this frame; #c is cleared to see-through and the ground goes on #cB
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#1d3a55'; ctx.fillRect(0, 0, W, H);
   const z = cam.zoom; ctx.setTransform(z, 0, 0, z, W / 2, H / 2); const sk = shakeOn ? shake : 0;
-  const cx = Math.round(cam.x + rand(-sk, sk)), cy = Math.round(cam.y + rand(-sk, sk)); ctx.translate(-cx, -cy); WMAT = ctx.getTransform();
+  const cx = Math.round(cam.x + rand(-sk, sk)), cy = Math.round(cam.y + rand(-sk, sk)); ctx.translate(-cx, -cy); WMAT = ctx.getTransform(); if (GLL) glBegin(cx, cy, z);
   const hw = W / 2 / z + 4, hh = H / 2 / z + 4, vis = q => Math.abs(q.x - cx) < hw + 14 && Math.abs(q.y - cy) < hh + 14;
   drawGround(cx, cy, hw, hh); drawPuddles(false); drawRoute();
   for (const k of pickups) if (vis(k)) drawPickup(k); drawMines(); drawBiz(); drawStation();
   for (const t of trailers) if (Math.abs(t.x - cx) < hw + 60 && Math.abs(t.y - cy) < hh + 60) drawTrailer(t);
-  for (const c of cars) if (vis(c)) drawCar(c);
-  drawCorpses(); drawNpcs(); if (state === 'play') drawInteract();
+  GLF = GLL ? 1 : 0; for (const c of cars) if (vis(c)) drawCar(c);
+  drawCorpses(); drawNpcs(); if (GLL) glDone(); if (state === 'play') drawInteract();
   if (state !== 'menu' && state !== 'dead' && !p.car) { drawPlayer(); drawThrowUI(); } drawNames(); drawEdge();
   for (const b of projs) {
     if (b.k === 'b' && (b.amx === 'tr' || b.amx === 'fire' || b.amx === 'inc')) { const L = b.amx === 'tr' ? .05 : .02; ctx.save(); ctx.strokeStyle = b.amx === 'tr' ? b.trc || 'rgba(255,90,40,.85)' : 'rgba(255,170,40,.8)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(b.x - b.vx * L, b.y - b.vy * L); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.restore(); }   // 12B tracer / burning rounds leave a glowing streak
@@ -2856,7 +2975,7 @@ function draw() {
     else { const age = 1.8 - b.life, zz = Math.abs(Math.sin(age * 7)) * 7 * Math.exp(-age * 1.4); ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(b.x - 1.5, b.y, 3, 1.5);
       ctx.fillStyle = (b.life < .6 && Math.floor(b.life * 12) % 2) ? '#e03a2a' : '#4a6a2a'; ctx.beginPath(); ctx.arc(b.x, b.y - zz, 2.5, 0, 7); ctx.fill(); }
   }
-  drawNight(cx, cy, z, hw, hh); drawPuddles(true);                                     // light + darkness on the ground layer; everything overhead below is only shaded by the night, not lit
+  drawNight(cx, cy, z, hw, hh); if (GLL) glEnd(); drawPuddles(true);                                     // light + darkness on the ground layer; everything overhead below is only shaded by the night, not lit
   drawLaser(); drawGunLaser(); drawRevLines(); drawBoxTops(cx, cy, hw, hh); drawTankerTops(cx, cy, hw, hh); drawCanopies(cx, cy, hw, hh); drawCovers(); safesOther(drawCovers); drawSiteTops(cx, cy, hw, hh); drawBirds(); drawUfo(); drawThermal();
   for (const q of parts) {
     const r = q.life / q.max;
@@ -3424,7 +3543,20 @@ function npcUpdate(n, dt) {
   { const mv = Math.hypot(n.x - ox0, n.y - oy0); n.stuckT = spd > 10 && mv < spd * dt * .3 ? (n.stuckT || 0) + dt : 0; }   // trying to move but not getting anywhere
   n.va = n.va === undefined ? n.a : n.va + angD(n.a, n.va) * Math.min(1, dt * 9);   // the body turns smoothly toward where they want to face (no head-snapping)
 }
-function drawNpc(n) {
+const NSPR = new WeakMap();                                             // ver18.1: each person's body sprite, kept until something about their look changes (no key string per frame)
+function npcLive(n, z) { return (n.mt > 0 && (!z || n.mk === 'kick')) || (n.fl > 0 && !!n.weapon); }   // a punch / kick / shot changes the body, so it's drawn live (a zombie's swing doesn't)
+function npcSpr(n, z, sp) {
+  const run = z && n.zt === 'runner' && sp > 40 ? 1 : 0, e = NSPR.get(n); if (e && e.k === n.kind && e.zt === n.zt && e.sh === n.shirt && e.sk === n.skin && e.h === n.hair && e.w === n.worker && e.wp === n.weapon && e.gm === n.wgmj && e.r === run) return e.b;
+  const key = 'n|' + n.kind + '|' + (n.zt || '') + '|' + n.shirt + '|' + n.skin + '|' + n.hair + '|' + (n.worker ? 1 : 0) + '|' + (n.weapon || '') + '|' + (n.wgmj || '') + '|' + run; let b = sprGet(key); if (!b) { b = sprBake(26, 70, () => npcBody(n, z, sp)); sprPut(key, b); }
+  NSPR.set(n, { k: n.kind, zt: n.zt, sh: n.shirt, sk: n.skin, h: n.hair, w: n.worker, wp: n.weapon, gm: n.wgmj, r: run, b }); return b;
+}
+function drawNpc(n) {                                                   // ver18.1: with WebGL a person is shadow + legs + body sprite in the queue; one who can't be a sprite (crawling, punching, firing) is drawn after the stamp, so they stay above the cars
+  if (!GLF) { drawNpc0(n); return; } if (n.inCar) return; const z = n.kind === 'zombie';
+  if ((z && n.zt === 'crawler') || npcLive(n, z)) { GLR.late.push(n); return; }
+  const sp = Math.hypot(n.vx, n.vy); glLegs(n, sp); glQ(npcSpr(n, z, sp), Math.round(n.x), Math.round(n.y), n.va === undefined ? n.a : n.va, 26, 70, 0, 0, 1, 1, 1, 1);
+  if (n.hp < n.max || n.agro || n.stance === 'friend' || n.scare > time) GLR.mk.push(n);
+}
+function drawNpc0(n) {
   if (n.inCar) return;                                                  // ver17.4: a joiner at the wheel is inside their car
   ctx.save(); ctx.translate(Math.round(n.x), Math.round(n.y)); const z = n.kind === 'zombie', sp = Math.hypot(n.vx, n.vy);
   if (z && n.zt === 'crawler') { ctx.rotate(n.va === undefined ? n.a : n.va); const s = Math.sin(n.phase) * 2.2;   // flat on the ground, dragging itself along by its arms
@@ -3433,7 +3565,15 @@ function drawNpc(n) {
     ctx.restore(); if (n.hp < n.max) { ctx.fillStyle = '#300'; ctx.fillRect(n.x - 5, n.y - 9, 10, 2); ctx.fillStyle = '#6a9a4a'; ctx.fillRect(n.x - 5, n.y - 9, 10 * n.hp / n.max, 2); } return; }
   ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(1.5, 1.5, 5.5, 4, 0, 0, 7); ctx.fill();
   if (sp > 1) { ctx.save(); ctx.rotate(Math.atan2(n.vx, -n.vy)); const s = Math.sin(n.phase) * 3.2; ctx.fillStyle = '#222'; ctx.fillRect(-3, -1 + s, 2, 3); ctx.fillRect(1, -1 - s, 2, 3); ctx.restore(); } else { ctx.fillStyle = '#222'; ctx.fillRect(-3, -1, 2, 3); ctx.fillRect(1, -1, 2, 3); }
-  ctx.rotate(n.va === undefined ? n.a : n.va); const r = 1 - Math.max(0, n.mt) / .2;
+  ctx.rotate(n.va === undefined ? n.a : n.va); if (SPRN && !SPROFF && !npcLive(n, z)) sprBlit(npcSpr(n, z, sp), 26, 70); else npcBody(n, z, sp);   // ver18.0
+  ctx.restore(); npcMarks(n, z);
+}
+function npcMarks(n, z) {                                               // ver18.1: the health bar and the ! over a person
+  if (n.hp < n.max) { ctx.fillStyle = '#300'; ctx.fillRect(n.x - 5, n.y - 9, 10, 2); ctx.fillStyle = z ? '#6a9a4a' : '#e03030'; ctx.fillRect(n.x - 5, n.y - 9, 10 * n.hp / n.max, 2); }
+  if ((n.agro || n.stance === 'friend' || n.scare > time) && !z) { const ally = n.stance === 'friend', sc = !n.agro && !ally; ctx.font = 'bold 11px "Courier New",monospace'; ctx.textAlign = 'center'; ctx.fillStyle = '#000'; ctx.fillText('!', n.x + 1, n.y - 12); ctx.fillStyle = sc ? '#ffd23a' : ally ? '#4aeaff' : '#ff2a2a'; ctx.fillText('!', n.x, n.y - 13); }   // yellow: startled by a horn
+}
+function npcBody(n, z, sp) {                                             // ver18.0: everything of a person above the legs, in their own facing
+  const r = 1 - Math.max(0, n.mt) / .2;
   if (n.mt > 0 && n.mk === 'kick') { ctx.fillStyle = '#222'; ctx.fillRect(-1, -2 - r * 10, 2.4, 4); }
   ctx.fillStyle = n.shirt; ctx.fillRect(-5, -3, 10, 5);
   ctx.fillStyle = n.skin;
@@ -3446,9 +3586,6 @@ function drawNpc(n) {
   else if (n.kind === 'bandit') { ctx.fillStyle = '#c22'; ctx.fillRect(-3, -3.6, 6, 1.8); }
   else if (n.kind === 'cop') { ctx.fillStyle = '#141c38'; ctx.beginPath(); ctx.arc(0, 0, 2.9, 0, 7); ctx.fill(); ctx.fillRect(-2.6, -3.9, 5.2, 1.4); ctx.fillStyle = '#e8c040'; ctx.fillRect(-3.8, -2.2, 1.6, 1.6); }   // 15.2: peaked cap + badge
   else if (n.kind === 'soldier') { ctx.fillStyle = '#3c4628'; ctx.beginPath(); ctx.arc(0, .2, 3.4, 0, 7); ctx.fill(); ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(-3, 1.4, 6, 1); }   // helmet
-  ctx.restore();
-  if (n.hp < n.max) { ctx.fillStyle = '#300'; ctx.fillRect(n.x - 5, n.y - 9, 10, 2); ctx.fillStyle = z ? '#6a9a4a' : '#e03030'; ctx.fillRect(n.x - 5, n.y - 9, 10 * n.hp / n.max, 2); }
-  if ((n.agro || n.stance === 'friend' || n.scare > time) && !z) { const ally = n.stance === 'friend', sc = !n.agro && !ally; ctx.font = 'bold 11px "Courier New",monospace'; ctx.textAlign = 'center'; ctx.fillStyle = '#000'; ctx.fillText('!', n.x + 1, n.y - 12); ctx.fillStyle = sc ? '#ffd23a' : ally ? '#4aeaff' : '#ff2a2a'; ctx.fillText('!', n.x, n.y - 13); }   // yellow: startled by a horn
 }
 function drawNpcs() { for (const n of NPCS) if (Math.abs(n.x - cam.x) < W / 2 / cam.zoom + 20 && Math.abs(n.y - cam.y) < H / 2 / cam.zoom + 20) { if (n.kind === 'cow') drawCow(n); else drawNpc(n); } }
 
@@ -4119,10 +4256,11 @@ function exhPop(c) {                                                   // 7H.6 e
 const PLATES = { white: ['WHITE', '#f2f2ee', '#1a2a6a'], black: ['BLACK', '#141414', '#f2f2f2'], yellow: ['YELLOW', '#f2c830', '#141414'], blue: ['BLUE', '#2050c0', '#f2f2f2'], gold: ['GOLD', '#d4a930', '#2a1a00'], vanity: ['VANITY PINK', '#f4d6ea', '#c02080'] };   // name, plate, letters
 const ORN = { star: 'HOOD STAR', skull: 'HOOD SKULL', dice: 'FUZZY DICE', bobble: 'BOBBLEHEAD' }, ISTY = { sport: ['SPORT', '#c02020', '#222'], luxury: ['LUXURY', '#8a5a2a', '#c8b090'], retro: ['RETRO', '#f0f0e8', '#b03a2a'] };   // interior: name, steering wheel, seats
 const plateTxt = () => 'SR' + (1000 + Math.floor(Math.random() * 9000));
-function hydS(c) {                                                     // hydraulics bounce (and the thump of the trunk speakers) as a quick scale pulse
+function hydK(c) {                                                     // hydraulics bounce (and the thump of the trunk speakers) as a quick scale pulse
   let k = 1; if (c.hydT) { const t = time - c.hydT; if (t < 1.6) k += .09 * Math.abs(Math.sin(t * 9)) * Math.exp(-t * 2.5); }
-  if (c.beat && c === p.car) k += .018 * (1 - (time * 2) % 1); if (k !== 1) ctx.scale(k, k);
+  if (c.beat && c === p.car) k += .018 * (1 - (time * 2) % 1); return k;
 }
+function hydS(c) { const k = hydK(c); if (k !== 1) ctx.scale(k, k); }
 function hydJump(c) { if (!hasMod(c, 'hyd')) { toast('NO HYDRAULICS - FIT THEM IN THE DEALER SERVICE GARAGE (BODY)'); return; } c.hydT = time; nz(.14, .3, 3000, 'highpass'); tone(90, .12, 'sine', .25, -30); }
 function beatKey(c) { if (!hasMod(c, 'spk')) { toast('NO TRUNK SPEAKERS - FIT THEM IN THE DEALER SERVICE GARAGE (BODY)'); return; } c.beat = !c.beat; snd.click(); toast(c.beat ? 'SPEAKERS ON' : 'SPEAKERS OFF'); }
 let beatN = 0, beatI = 0;
@@ -4789,7 +4927,7 @@ function ubFire() {                                                    // [C] th
   else { const S2 = WEAP.shotgun; for (let i = 0; i < S2.pel; i++) { const an = aa + (Math.random() - .5) * S2.sp, sp = S2.spd * rand(.95, 1.05); projs.push({ k: 'b', x: ox, y: oy, vx: Math.sin(an) * sp, vy: -Math.cos(an) * sp, z: 8, vz: S2.vz, g: S2.g, d: 0, spd: sp, dmg: S2.dmg, fo: S2.fo, ig: p.roof, ox, oy, gun: it }); } snd.gun(S2.sn); snd.pump(); shake += 1.2; }
   p.flash = .06; p.mf = .09; p.mfx = ox; p.mfy = oy; p.shotT = time; alertShot(p.x, p.y, w.noise > 1 ? w.noise : 1); renderInv(); }
 function drawThermal() {                                               // thermal optic: scoped, the scene goes dark blue and heat glows (people white-hot, engines warm, the dead cold)
-  const it = inv[sel]; if (state !== 'play' || p.car || !scoped || !it || !WEAP[it.t] || !gunW(it).thermal) return; const z = cam.zoom, hw = W / 2 / z + 20, hh = H / 2 / z + 20, vis = (x, y) => Math.abs(x - cam.x) < hw && Math.abs(y - cam.y) < hh;
+  if (!thermOn()) return; const z = cam.zoom, hw = W / 2 / z + 20, hh = H / 2 / z + 20, vis = (x, y) => Math.abs(x - cam.x) < hw && Math.abs(y - cam.y) < hh;
   ctx.save(); ctx.fillStyle = 'rgba(4,10,26,.74)'; ctx.fillRect(cam.x - hw, cam.y - hh, hw * 2, hh * 2); ctx.globalCompositeOperation = 'lighter';
   const heat = (x, y, r, rgb, a = 1) => { const gr = ctx.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, `rgba(${rgb},${a})`); gr.addColorStop(.45, `rgba(${rgb},${a * .5})`); gr.addColorStop(1, `rgba(${rgb},0)`); ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); };
   for (const n of NPCS) { if (n.hp <= 0 || !vis(n.x, n.y)) continue; if (n.fireT > time) heat(n.x, n.y, 18, '255,120,40'); if (n.kind === 'zombie') heat(n.x, n.y, 7, '60,110,110', .7); else { heat(n.x, n.y, 11, '255,170,90'); heat(n.x, n.y, 4.5, '255,255,240'); } }
@@ -6996,7 +7134,7 @@ function snapshot(pl = p, R = 1400) {
     b: projs.filter(near).map(b => [b.k, r(b.x), r(b.y), a(b.a ?? Math.atan2(b.vx || 0, -(b.vy || 0)))]) }; }
 // ===== 13.13 (ver16.7) MULTIPLAYER (PvPvE, one player hosts in their browser, up to 4 players). The host runs the whole sim; each joiner is an avatar NPC (kind 'rp') driven by that joiner's input, and gets a snapshot of what's around it 20x a second. Links: BroadcastChannel (same computer, two tabs / windows) or WebRTC with copy-paste codes (no server) =====
 const NET = { role: null, id: Math.random().toString(36).slice(2, 8), peers: new Map(), links: [], snapT: 0, inT: 0, me: 0, cur: null, prev: null, curT: 0, prevT: 0, ents: new Map(), host: null, status: '' };
-const NET_MAX = 4, NET_HZ = 20, BUILD = '17.9f';
+const NET_MAX = 4, NET_HZ = 20, BUILD = '18.1';
 function nearPl(x, y, R) { if (Math.abs(x - p.x) <= R && Math.abs(y - p.y) <= R) return true; for (const pr of NET.peers.values()) { const P = pr.pl && pr.av && pr.pl.p; if (P && Math.abs(x - P.x) <= R && Math.abs(y - P.y) <= R) return true; } return false; }   // ver17.4: within R (square) of the host or any joiner
 function simNear(n) { const R = CFG.population.simRadius; if (Math.abs(n.x - p.x) < R && Math.abs(n.y - p.y) < R) return true; for (const pr of NET.peers.values()) { const A = pr.av; if (A && Math.abs(n.x - A.x) < R && Math.abs(n.y - A.y) < R) return true; } return false; }   // ver17.2: the city moves around every player, not just the host
 function netStatus(s) { NET.status = s; const el = $('mpSt'); if (el) el.textContent = s; }
@@ -7182,7 +7320,7 @@ function netSnap(pr, R = 1100) {                                                
   const A = pr.av, r = v => Math.round(v || 0), a = v => Math.round((v || 0) * 100) / 100, near = o => Math.abs(o.x - A.x) < R && Math.abs(o.y - A.y) < R, nd = [];
   const def = (o, f) => { const id = eidOf(o); if (!pr.known.has(id)) { pr.known.add(id); nd.push(f(id)); } return id; };
   const n = NPCS.filter(q => q.hp > 0 && !q.inCar && near(q)).map(q => { const e = [def(q, id => ({ id, e: 'n', kind: q.kind, shirt: q.shirt, skin: q.skin, hair: q.hair, zt: q.zt, max: q.max, w: q.weapon || null, un: q.uname || null, rp: q.rp || null })), r(q.x), r(q.y), a(q.va ?? q.a), Math.round(q.hp), q.fl > 0 ? 1 : 0, q.weapon || '', (q.agro ? 1 : 0) | (q.stance === 'friend' ? 2 : 0) | (q.stance === 'neutral' ? 4 : 0) | (q.worker ? 8 : 0) | (q.scare > time ? 16 : 0) | (q.guard !== undefined ? 32 : 0), q.mt > 0 ? q.mk || '' : 0]; return e; });   // ver17.3: other players' guns change, so theirs ride along every time (ver17.4: + a muzzle-flash flag)
-  const c = cars.filter(near).map(q => [def(q, id => ({ id, e: 'c', tk: q.tk, color: q.color, mods: q.mods, svc: q.svc || null, law: q.law || null, ow: q.ow || null })), r(q.x), r(q.y), a(q.a), q.dead ? 1 : 0, q.light ? 1 : 0, a(q.tur ?? q.a), a(q.sa), Math.round(100 * (q.hp || 0) / (q.maxhp || 1)), q.brk > .1 ? 1 : 0, q.nosOn ? 1 : 0, Math.round(100 * (q.dirt || 0)), Math.round(100 * (q.rpm || 0)), q.pdrv || q === p.car ? 1 : 0, q.impound ? 1 : 0, q.flat ? q.flat.map(v => v ? 1 : 0).join('') : 0, (q.drv || q.pdrv || q === p.car ? 1 : 0) | (q.thr > .5 ? 2 : 0) | (q.drift ? 4 : 0) | (q.skid ? 8 : 0), carEx(q)]);   // ver17.4: + steering, damage, brake lights, nitrous, dirt, revs, "a player is driving"
+  const c = cars.filter(near).map(q => [def(q, id => ({ id, e: 'c', tk: q.tk, color: q.color, mods: q.mods, svc: q.svc || null, law: q.law || null, ow: q.ow || null })), r(q.x), r(q.y), a(q.a), q.dead ? 1 : 0, q.light ? 1 : 0, a(q.tur ?? q.a), a(q.sa), Math.round(100 * (q.hp || 0) / (q.maxhp || 1)), q.brk > .1 ? 1 : 0, q.nosOn ? 1 : 0, Math.round(100 * (q.dirt || 0)), Math.round(100 * (q.rpm || 0)), q.pdrv || q === p.car ? 1 : 0, q.impound ? 1 : 0, q.flat ? q.flat.map(v => v ? 1 : 0).join('') : 0, (q.drv || q.pdrv || q === p.car ? 1 : 0) | (q.thr > .5 ? 2 : 0) | (q.drift ? 4 : 0) | (q.skid ? 8 : 0) | (hornOn(q) ? 16 : 0), carEx(q)]);   // ver17.4: + steering, damage, brake lights, nitrous, dirt, revs, "a player is driving"
   const tr = trailers.filter(near).map(q => [def(q, id => ({ id, e: 't', kind: q.kind, color: q.color, ow: q.ow || null })), r(q.x), r(q.y), a(q.a), q.dead ? 1 : 0, q.open ? 1 : 0, Math.round(q.fuelLoad || 0), q.load ? eidOf(q.load) : 0]);
   const k = pickups.filter(near).map(q => [def(q, id => ({ id, e: 'k', t: q.t, n: q.n, gmj: q.gmj || null })), r(q.x), r(q.y)]);
   const b = projs.filter(near).map(q => [q.k, r(q.x), r(q.y), a(q.a ?? Math.atan2(q.vx || 0, -(q.vy || 0))), q.k === 'i' ? (q.it && q.it.t) || 0 : q.k === 'g' ? a(q.life) : q.k === 'r' ? (q.gl ? 1 : 0) : q.amx || 0]), hw = inv[sel] && WEAP[inv[sel].t] ? inv[sel].t : '';
@@ -7267,7 +7405,7 @@ function netClientFrame() {                                             // rebui
   const [hx, hy, ha, hcar, hhp, hname, hs, hk, hh, hfl, hw] = S2.hp; { const E = NET.ents.get('host') || { d: {}, o: null }; if (!E.o) { E.o = mkNpc('civ', hx, hy, { shirt: hs, skin: hk, hair: hh, weapon: 'pistol' }); E.o.uname = hname; E.o.isPl = true; NET.ents.set('host', E); } const o = E.o, ox = o.x, oy = o.y; o.x = hx; o.y = hy; o.a = o.va = ha; o.hp = o.max = Math.max(hhp, 1); o.hp = hhp; o.weapon = hw || null; if (hfl && !o.flWas) { o.fl = .06; shot(o); } o.flWas = hfl; o.fl = (o.fl || 0) - fdt; o.vx = (o.x - ox) * 30; o.vy = (o.y - oy) * 30; o.phase = (o.phase || 0) + Math.hypot(o.vx, o.vy) / 60 * .22; if (!hcar) NPCS.push(o); }
   cars = []; for (const q of S2.c) { const o = get(q[0], d => { const c = mkCar(q[1], q[2], q[3], CTYPES[d.tk] ? d.tk : 'sedan', 100); c.color = d.color; if (d.mods) c.mods = d.mods; c.svc = d.svc || undefined; c.law = d.law || undefined; c.ow = d.ow || undefined; return c; }); if (!o) continue; carExIn(o, q[17]); if (q[0] === PRC) { o.dead = !!q[4]; o.light = !!q[5]; o.tur = q[6]; o.impound = !!q[14]; o.flat = typeof q[15] === 'string' ? [...q[15]].map(v => v === '1') : null; cars.push(o); continue; } const ox = o.x, oy = o.y; lerpTo(o, q); o.a = q[3]; o.dead = !!q[4]; o.light = !!q[5]; o.tur = q[6];
     if (q.length > 7) { o.sa = +q[7] || 0; o.hp = (+q[8] || 0) / 100 * o.maxhp; o.brk = q[9] ? 1 : 0; o.nosOn = !!q[10]; o.dirt = (+q[11] || 0) / 100; o.rpm = (+q[12] || 0) / 100; o.pdrv = !!q[13]; o.impound = !!q[14]; o.flat = typeof q[15] === 'string' ? [...q[15]].map(v => v === '1') : null; }   // ver17.4: the same detail the host sees (wheels, smoke / damage, brake lights, nitrous flame, dirt, revs)
-    o.sp = Math.hypot(o.x - ox, o.y - oy) / Math.max(fdt, .001); cars.push(o); if (q.length > 16 && Math.abs(o.x - cam.x) < 500 && Math.abs(o.y - cam.y) < 400) { const fb = +q[16] || 0, sn = Math.sin(o.a), cs = Math.cos(o.a); o.drift = !!(fb & 4); o.skid = !!(fb & 8); carFx(o, fdt, !!(fb & 1), !!(fb & 2), true, flatN(o), o.flat, o.sp, sn, -cs, cs, sn); emit(o, fdt); } }
+    o.sp = Math.hypot(o.x - ox, o.y - oy) / Math.max(fdt, .001); cars.push(o); if (q.length > 16 && Math.abs(o.x - cam.x) < 500 && Math.abs(o.y - cam.y) < 400) { const fb = +q[16] || 0, sn = Math.sin(o.a), cs = Math.cos(o.a); o.drift = !!(fb & 4); o.skid = !!(fb & 8); o.hornOn = !!(fb & 16); carFx(o, fdt, !!(fb & 1), !!(fb & 2), true, flatN(o), o.flat, o.sp, sn, -cs, cs, sn); emit(o, fdt); } }
   trailers = []; for (const q of S2.tr) { const o = get(q[0], d => { const t = mkTrailer(q[1], q[2], q[3], d.kind); t.color = d.color; t.ow = d.ow || undefined; return t; }); if (!o) continue; o.x = q[1]; o.y = q[2]; o.a = q[3]; o.dead = !!q[4]; o.open = !!q[5]; o.fuelLoad = +q[6] || 0; o.load = q[7] ? (NET.ents.get(q[7]) || {}).o || null : null; trailers.push(o); }
   pickups = []; for (const q of S2.pk || []) { const o = get(q[0], d => Object.assign(mkPick(d.t, q[1], q[2], d.n), { gmj: d.gmj || undefined, life: 999 })); if (!o) continue; o.x = q[1]; o.y = q[2]; pickups.push(o); }
   projs = S2.b.map(q => { const E = q[4]; return { k: q[0], x: q[1], y: q[2], a: q[3], vx: Math.sin(q[3]) * 600, vy: -Math.cos(q[3]) * 600, z: 6, life: q[0] === 'g' ? +E || 1 : 1, gl: q[0] === 'r' && E === 1, amx: q[0] === 'b' && E ? E : undefined, it: q[0] === 'i' ? { t: E || 'pistol', n: 1 } : null, spin: performance.now() / 90 }; });
@@ -7280,7 +7418,7 @@ function netClientFrame() {                                             // rebui
   refreshBoxes(); ufo = NET.cur.uf || null; WANT.heli = NET.cur.hl || null; try { atmoTick(fdt); } catch (e) {} atmo.k = (+NET.cur.ak || 0) / 100; for (const c of CORPSES) c.t -= fdt; for (const j of JOBS.list) if (j.t > 0) j.t -= fdt;   // ver17.9: box trailer tops, UFO, helicopter, lightning, bodies
   if (state !== 'build') { const c = p.car, sp = c ? Math.min(1, c.sp / c.ty.max) : 0, lead = 55 * sp * Math.sign(c && c.v || 1), it = inv[sel], sc = !c && scoped && it && (it.t === 'sniper' || (WEAP[it.t] && gunW(it).scope)), zF = CFG.cam.footZoom * S.zoom, mwx = cam.x + (mouse.x / PIXEL - W / 2) / cam.zoom, mwy = cam.y + (mouse.y / PIXEL - H / 2) / cam.zoom, tx = c ? c.x + Math.sin(c.a) * lead : sc ? p.x + (mwx - p.x) * CFG.cam.scopeLead : p.x + (p.vx || 0) * .3, ty = c ? c.y - Math.cos(c.a) * lead : sc ? p.y + (mwy - p.y) * CFG.cam.scopeLead : p.y + (p.vy || 0) * .3, zT = c ? (CFG.cam.carZoom - CFG.cam.carZoomGain * sp) * S.zoom : sc ? (it.t === 'sniper' ? CFG.cam.scopeZoom : (CFG.cam.scopeZoom + zF) / 2) : zF, k = 1 - Math.exp(-fdt * 3);   // ver17.4: the host's camera (zooms out with speed in a car)
     cam.x += (tx - cam.x) * k; cam.y += (ty - cam.y) * k; cam.zoom += (zT - cam.zoom) * (1 - Math.exp(-fdt * (sc ? 4 : 1.2))); }
-  if (!p.car) p.a = Math.atan2((cam.x + (mouse.x / PIXEL - W / 2) / cam.zoom) - p.x, -((cam.y + (mouse.y / PIXEL - H / 2) / cam.zoom) - p.y));
+  if (!p.car) p.a = faceAt(p.x, p.y, cam.x + (mouse.x / PIXEL - W / 2) / cam.zoom, cam.y + (mouse.y / PIXEL - H / 2) / cam.zoom);
   for (let i = parts.length - 1; i >= 0; i--) { const q = parts[i]; q.x += q.vx * fdt; q.y += q.vy * fdt; if (q.k === 's') q.s += fdt * 5; q.life -= fdt; if (q.life <= 0) parts.splice(i, 1); }   // ver17.2: blood / sparks / smoke move on the joiner's screen too
   if (NET.miss.size && (NET.needT = (NET.needT || 0) - (fdt || 1 / 60)) <= 0) { NET.needT = .5; netSend(NET.host, { t: 'need', ids: [...NET.miss].slice(0, 200) }); NET.miss.clear(); }
   if (NET.actQ.length && (NET.actT -= fdt) <= 0) { NET.actT = .7; netSend(NET.host, NET.actQ[0]); }   // ver17.5: one at a time, repeated until acknowledged
@@ -7472,7 +7610,7 @@ function drawNight(cx, cy, z, hw, hh) {                              // light ma
     const f2 = floodG; f2.setTransform(1, 0, 0, 1, 0, 0); f2.globalCompositeOperation = 'source-over'; f2.clearRect(0, 0, W, H); f2.fillStyle = `rgba(${NTC},${D})`; f2.fillRect(0, 0, W, H); f2.globalCompositeOperation = 'destination-out'; f2.setTransform(z, 0, 0, z, W / 2, H / 2); f2.translate(-cx, -cy);
     for (const f of flc) { f2.globalAlpha = .98; f2.fillStyle = falloff(f2.createRadialGradient(f.x, f.y, 0, f.x, f.y, f.len), '0,0,0', 1); f2.beginPath(); f2.moveTo(f.P[0], f.P[1]); for (let i = 2; i < f.P.length; i += 2) f2.lineTo(f.P[i], f.P[i + 1]); f2.closePath(); f2.fill(); }
     f2.globalAlpha = 1; f2.globalCompositeOperation = 'source-over'; FLPAT = ctx.createPattern(floodC, 'no-repeat'); }
-  ctx.save(); ctx.globalCompositeOperation = 'lighter';                // warm colour where the light falls
+  if (GLR.st === 1) glMid(); ctx.save(); ctx.globalCompositeOperation = 'lighter';                // warm colour where the light falls (ver18.1: with WebGL, on its own layer that's added)
   if (lampsOn) { const S2 = lampSpr(T.lampR * .8); ctx.globalAlpha = D; for (const L of LAMPS) if (seen(L.x, L.y, T.lampR)) ctx.drawImage(S2, L.x - T.lampR * .8, L.y - T.lampR * .8, T.lampR * 1.6, T.lampR * 1.6); ctx.globalAlpha = 1; }   // 16.4: one pre-drawn warm glow sprite instead of a new gradient per lamp per frame
   for (const c of cars) if (!c.dead && lit(c) && seen(c.x, c.y, 20)) { const L = carHL(c), x = c.x - Math.sin(c.a) * L, y = c.y + Math.cos(c.a) * L, tt = c.mods && TAILS[c.mods.tail], ta = (tt ? tt[2] : .5) * D, gr = ctx.createRadialGradient(x, y, 0, x, y, 8); gr.addColorStop(0, `rgba(255,30,20,${ta})`); gr.addColorStop(1, 'rgba(255,30,20,0)'); ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.fill(); }   // 7F.5 tail tint: smoked dims it, deep red / clear brighten it
   for (const c of cars) if (neonOn(c) && seen(c.x, c.y, 30)) { const rgb = neonRGB(c); for (const [nx, ny] of neonPts(c)) { const gr = ctx.createRadialGradient(nx, ny, 0, nx, ny, 16); gr.addColorStop(0, `rgba(${rgb},${.5 * D})`); gr.addColorStop(1, `rgba(${rgb},0)`); ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(nx, ny, 16, 0, 7); ctx.fill(); } }   // 7F.3 underglow colour on the ground
@@ -7483,7 +7621,7 @@ function drawNight(cx, cy, z, hw, hh) {                              // light ma
   if (p.mf > 0 && !p.car) flash(p.mfx, p.mfy); for (const n of NPCS) if (n.fl > -.04 && n.hp > 0) flash(n.x + Math.sin(n.a) * 8, n.y - Math.cos(n.a) * 8);
   const eyeA = Math.min(1, D * 1.6); if (eyeA > .15) for (const n of NPCS) if (n.kind === 'zombie' && n.hp > 0 && seen(n.x, n.y, 6)) {   // zombie eyes glow green in the dark
     const cs = Math.cos(n.va ?? n.a), sn = Math.sin(n.va ?? n.a), ec = eyeRGB(n, 110, 90); for (const ex of [-1.3, 1.3]) { const x = n.x + ex * cs + 2.2 * sn, y = n.y + ex * sn - 2.2 * cs, gr = ctx.createRadialGradient(x, y, 0, x, y, 4); gr.addColorStop(0, `rgba(${ec},${.55 * eyeA})`); gr.addColorStop(1, `rgba(${ec},0)`); ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(x, y, 4, 0, 7); ctx.fill(); } }
-  ctx.restore();
+  ctx.restore(); if (GLR.st === 2) glWarm();
   if (eyeA > .15) { for (const n of NPCS) if (n.kind === 'zombie' && n.hp > 0 && seen(n.x, n.y, 6)) { const cs = Math.cos(n.va ?? n.a), sn = Math.sin(n.va ?? n.a); ctx.fillStyle = `rgba(${eyeRGB(n, 150, 110)},${eyeA})`; for (const ex of [-1.3, 1.3]) ctx.fillRect(n.x + ex * cs + 2.2 * sn - .6, n.y + ex * sn - 2.2 * cs - .6, 1.2, 1.2); } }
   const bq = SAFE.bcn, bg = SAFE.sg; if (SAFE.beaconOn && bq && (bg.on || bg.armed) && D > .05 && seen(bq.x, bq.y, 60)) { const bk = bg.on ? .5 + .2 * Math.sin(time * 10) : (Math.floor(time * 2) % 2 ? 0 : .35), bgr = ctx.createRadialGradient(bq.x, bq.y, 0, bq.x, bq.y, 36);   // the beacon's red light reaches through the dark
     bgr.addColorStop(0, `rgba(255,50,30,${bk * D})`); bgr.addColorStop(1, 'rgba(255,50,30,0)'); ctx.fillStyle = bgr; ctx.beginPath(); ctx.arc(bq.x, bq.y, 36, 0, 7); ctx.fill(); }
@@ -7515,6 +7653,7 @@ $('sMM').onchange = e => { mmOn = e.target.checked; mm.style.display = mmOn ? 'b
 $('sMM2').onchange = e => { mmOn = e.target.checked; mm.style.display = mmOn ? 'block' : 'none'; $('sMM').checked = mmOn; };
 $('sMMg').onchange = e => { MM.grow = e.target.checked; saveMM(); }; $('sMMz').addEventListener('input', e => { MM.gz = +e.target.value / 100; saveMM(); }); $('sMMedit').onclick = mmEditOn; $('sMMdef').onclick = () => { mmDef(); mmOpts(); };
 $('sTrk').onchange = e => S.tracks = e.target.checked;
+$('sGL').checked = GLON; $('sGL').onchange = e => { GLON = e.target.checked; try { localStorage.setItem('streetRiotGL', GLON ? '1' : '0'); } catch (x) {} };
 $('sFps').onchange = e => { S.fps = e.target.checked; if (!S.fps) $('fps').textContent = ''; };
 $('sDif').onchange = e => S.diff = e.target.value;
 $('sTip').onchange = e => S.tips = e.target.checked; $('sPad').checked = PAD.on; $('sPad').onchange = e => { PAD.on = e.target.checked; try { localStorage.setItem('streetRiotPadOff', PAD.on ? '0' : '1'); } catch (x) {} }; $('sHints').checked = HINTS_ON; $('sHints').onchange = e => { HINTS_ON = e.target.checked; try { localStorage.setItem('streetRiotHintsOff', HINTS_ON ? '0' : '1'); } catch (x) {} };
@@ -7749,9 +7888,9 @@ function lerpOut() { time = LERPL[0]; for (let i = 1; i < LERPL.length; i += 4) 
 function loop(now) { requestAnimationFrame(loop); try { loopStep(now); } catch (e) { if (LOOPE++ < 5) console.error(e); } }   // the next frame is booked first, so one bad frame can't freeze the game
 function loopStep(now, bgStep) { if (!bgStep) NET.rafT = now;
   if (BENCH) { last = now; return; }                                   // 13.1: the benchmark drives update / draw itself
-  const rdt = clamp((now - last) / 1000, 0, .5), BGH = !!bgStep, dt = clamp((now - last) / 1000, 0, .05); last = Math.max(last, now); fpsN++; fpsT += rdt; if (fpsT >= .5) { if (S.fps || NET.diag) $('fps').textContent = Math.round(fpsN / fpsT) + ' FPS' + (NET.diag ? netDiag(fpsT) : ''); fpsN = 0; fpsT = 0; }   // ver13.8: dt never negative (Chrome can hand the first frame after a long load a stale timestamp)
+  const rdt = clamp((now - last) / 1000, 0, .5), BGH = !!bgStep, dt = clamp((now - last) / 1000, 0, .05); last = Math.max(last, now); fpsN++; fpsT += rdt; if (fpsT >= .5) { if (S.fps || NET.diag) $('fps').textContent = Math.round(fpsN / fpsT) + ' FPS' + (NET.diag ? netDiag(fpsT) + (GLR.ok && GLON ? ' · GL' : ' · 2D') : ''); fpsN = 0; fpsT = 0; }   // ver13.8: dt never negative (Chrome can hand the first frame after a long load a stale timestamp)
   const play = state === 'play', live = play || (NET.role === 'host' && NET.peers.size > 0 && state !== 'menu'); if (state === 'build') bCamTick(dt); if (NET.role === 'client' && (play || (NET.cur && state !== 'menu'))) { fdt = Math.min(rdt, .25); NET.rdt = rdt; netClientFrame(); } else if (live) { const st0 = state, hk = keys, cK = state === 'build' ? { ...cam } : null; if (!play) { keys = {}; clickBuf = 0; } simAcc += bgStep ? rdt : dt; let n = 0; while (simAcc >= SIM_DT && n < (bgStep ? 8 : SIM_MAX) && state === st0) { lerpSnap(); update(SIM_DT); simAcc -= SIM_DT; n++; } if (n === SIM_MAX && !bgStep) simAcc = Math.min(simAcc, SIM_DT); else if (bgStep) simAcc = Math.min(simAcc, .25); if (!play) keys = hk; if (cK) Object.assign(cam, cK); } else { simAcc = 0; time += dt; fdt = dt; for (let i = parts.length - 1; i >= 0; i--) { const q = parts[i]; q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; if (q.life <= 0) parts.splice(i, 1); } }   // 13.8: whole fixed steps only; a slow frame runs up to 4 and drops the rest (the game slows down instead of spiralling)
-  if (NET.role === 'host') netHostTick(rdt); if (bgStep) return; padTick(); wantHud(play); jobHud(); const lp = play && NET.role !== 'client' && lerpIn(simAcc / SIM_DT); try { if (!BGH) draw(); } finally { if (lp) lerpOut(); } NET.frN = (NET.frN || 0) + 1; NET.mmA = (NET.mmA || 0) + fdt; if (mmOn && !BGH && NET.frN % 3 === 0) { mmTick(NET.mmA); drawMinimap(); NET.mmA = 0; } if (state === 'map') drawFullMap(); audioUpdate(play); radioTick(dt); hintTick(dt); if (NET.frN % 3 === 1) hoverTip();
+  if (NET.role === 'host') netHostTick(rdt); if (bgStep) return; padTick(); wantHud(play); jobHud(); const lp = play && NET.role !== 'client' && lerpIn(simAcc / SIM_DT); try { if (!BGH) draw(); } finally { if (lp) lerpOut(); } NET.frN = (NET.frN || 0) + 1; NET.mmA = (NET.mmA || 0) + fdt; if (mmOn && !BGH && NET.frN % 3 === 0) { mmTick(NET.mmA); drawMinimap(); NET.mmA = 0; } if (state === 'map') drawFullMap(); audioUpdate(play); hornsTick(); radioTick(dt); hintTick(dt); if (NET.frN % 3 === 1) hoverTip();
   birdT -= dt; if (play && AC && amb > .05 && birdT <= 0) { birdT = rand(4, 11); snd.chirp(); }
   const c = p.car, sc = Math.floor(score), it = inv[sel];
   { let ci = 0, ba = 0, inf = 0, zo = 0; for (const n of NPCS) { if (n.hp <= 0) continue; if (n.kind === 'zombie') zo++; else if (n.kind === 'bandit') ba++; else if (n.kind === 'civ') { if (n.inf > 0) inf++; else ci++; } if (n.kind === 'bandit' && n.inf > 0) inf++; } inf += CORPSES.length + (p.inf > 0 ? 1 : 0);   // infected bodies waiting to rise, infected bandits and you count too
